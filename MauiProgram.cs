@@ -6,6 +6,10 @@ using MauiBluethooth.Platforms.Android.Services;
 // Подключаем Android-реализацию Bluetooth-сервиса (используется под #if ANDROID)
 using MauiBluethooth.Platforms.Windows.Services;
 #endif
+// Подключаем ViewModel экрана чата для регистрации в DI
+using MauiBluethooth.Presentation.Chat.ViewModels;
+// Подключаем страницу экрана чата для регистрации в DI
+using MauiBluethooth.Presentation.Chat.Views;
 // Подключаем ViewModel экрана устройств для регистрации в DI
 using MauiBluethooth.Presentation.Devices.ViewModels;
 // Подключаем страницу экрана устройств для регистрации в DI
@@ -52,6 +56,11 @@ public static class MauiProgram
 		builder.Services.AddSingleton<DevicesViewModel>();
 		// Регистрируем страницу устройств как singleton
 		builder.Services.AddSingleton<DevicesPage>();
+
+		// Регистрируем ViewModel экрана чата как singleton
+		builder.Services.AddSingleton<ChatViewModel>();
+		// Регистрируем страницу чата как singleton
+		builder.Services.AddSingleton<ChatPage>();
 
 		// Директивы условной компиляции: сборка только для Android
 #if ANDROID

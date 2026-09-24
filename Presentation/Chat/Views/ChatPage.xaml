@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:models="clr-namespace:MauiBluethooth.Models"
+             xmlns:vm="clr-namespace:MauiBluethooth.Presentation.Chat.ViewModels"
+             x:Class="MauiBluethooth.Presentation.Chat.Views.ChatPage"
+             x:DataType="vm:ChatViewModel"
+             Title="{Binding DeviceName}">
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- Шапка: имя устройства, статус соединения и кнопка «Отключиться» -->
+        <Grid Padding="12,8" BackgroundColor="#F2F2F2" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <VerticalStackLayout Spacing="2">
+                <Label Text="{Binding DeviceName}"
+                       FontAttributes="Bold"
+                       FontSize="16"
+                       TextColor="#1F1F1F" />
+
+                <Label Text="{Binding ConnectionStatus}"
+                       FontSize="12"
+                       TextColor="#5F6368" />
+            </VerticalStackLayout>
+
+            <Button Grid.Column="1"
+                    Text="Отключиться"
+                    Command="{Binding DisconnectCommand}"
+                    FontSize="12"
+                    Padding="10,0"
+                    VerticalOptions="Center" />
+        </Grid>
+
+        <!-- Список сообщений чата -->
+        <CollectionView Grid.Row="1"
+                        x:Name="MessagesList"
+                        ItemsSource="{Binding Messages}"
+                        SelectionMode="None">
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="models:ChatMessage">
+                    <Grid Padding="8,3">
+                        <!-- Системное сообщение (серое, по центру) -->
+                        <Border IsVisible="{Binding ShowSystem}"
+                                HorizontalOptions="Center"
+                                Padding="10,4"
+                                StrokeThickness="0">
+                            <Label Text="{Binding Text}"
+                                   FontSize="12"
+                                   TextColor="Gray"
+                                   HorizontalTextAlignment="Center" />
+                        </Border>
+
+                        <!-- Исходящее сообщение (синий пузырь справа) -->
+                        <Border IsVisible="{Binding ShowOutgoing}"
+                                HorizontalOptions="End"
+                                BackgroundColor="#1A73E8"
+                                StrokeThickness="0"
+                                StrokeShape="RoundRectangle 14"
+                                Padding="12,8"
+                                MaximumWidthRequest="320">
+                            <Label Text="{Binding Text}"
+                                   TextColor="White" />
+                        </Border>
+
+                        <!-- Входящее сообщение (серый пузырь слева) -->
+                        <Border IsVisible="{Binding ShowIncoming}"
+                                HorizontalOptions="Start"
+                                BackgroundColor="#E5E5EA"
+                                StrokeThickness="0"
+                                StrokeShape="RoundRectangle 14"
+                                Padding="12,8"
+                                MaximumWidthRequest="320">
+                            <Label Text="{Binding Text}"
+                                   TextColor="#333333" />
+                        </Border>
+                    </Grid>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+
+        <!-- Нижняя панель: поле ввода и кнопка «Отправить» -->
+        <Grid Grid.Row="2"
+              Padding="12,8"
+              ColumnDefinitions="*,Auto"
+              ColumnSpacing="8"
+              BackgroundColor="#F2F2F2">
+            <Entry Text="{Binding InputText}"
+                   Placeholder="Введите данные..."
+                   TextColor="#000000"
+                   PlaceholderColor="#9AA0A6"
+                   ReturnType="Send"
+                   ReturnCommand="{Binding SendCommand}" />
+
+            <Button Grid.Column="1"
+                    Text="Отправить"
+                    Command="{Binding SendCommand}" />
+        </Grid>
+
+    </Grid>
+
+</ContentPage>

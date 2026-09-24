@@ -25,6 +25,12 @@ public partial class DeviceItemViewModel : ObservableObject
 	// Поле, хранящее статус устройства
 	private string status = string.Empty;
 
+	// Исходная модель устройства (нужна для передачи в сервис при подключении)
+	private BluetoothDeviceInfo? _device;
+
+	// Публичное свойство: возвращает исходную модель устройства (не null после конструктора)
+	public BluetoothDeviceInfo Device => _device!;
+
 	// Конструктор: создаёт VM на основе данных, полученных о реальном устройстве
 	public DeviceItemViewModel(BluetoothDeviceInfo device)
 	{
@@ -41,5 +47,7 @@ public partial class DeviceItemViewModel : ObservableObject
 		Address = device.Address;
 		// Если устройство сопряжено (bonded) — показываем «Сопряжено», иначе пустую строку
 		Status = device.IsBonded ? "Сопряжено" : string.Empty;
+		// Сохраняем исходные данные устройства для последующего подключения
+		_device = device;
 	}
 }

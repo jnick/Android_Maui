@@ -1,5 +1,15 @@
 // Подключаем пространство имён для P/Invoke-вызовов (DllImport, Marshal, StructLayout)
 using System.Runtime.InteropServices;
+// Подключаем средства кодирования текста (Encoding) и накопления строк (не требуется для Reader, но пригодится)
+using System.Text;
+// Подключаем WinRT Bluetooth API (BluetoothDevice, BluetoothCacheMode)
+using Windows.Devices.Bluetooth;
+// Подключаем WinRT RFCOMM API (RfcommServiceId, RfcommDeviceService)
+using Windows.Devices.Bluetooth.Rfcomm;
+// Подключаем WinRT сетевые сокеты (StreamSocket, SocketProtectionLevel)
+using Windows.Networking.Sockets;
+// Подключаем WinRT потоки данных (DataWriter)
+using Windows.Storage.Streams;
 // Подключаем наши модели данных (BluetoothDeviceInfo)
 using MauiBluethooth.Models;
 // Подключаем интерфейс Bluetooth-сервиса
@@ -8,8 +18,10 @@ using MauiBluethooth.Services;
 // Объявляем пространство имён Windows-реализаций сервисов
 namespace MauiBluethooth.Platforms.Windows.Services;
 
-// Реализация IBluetoothService для платформы Windows
-// (использует старый Bluetooth-стек Windows через P/Invoke из библиотеки bthprops.cpl)
+// Реализация IBluetoothService для платформы Windows.
+// Поиск — через старый Bluetooth-стек Windows (P/Invoke из bthprops.cpl).
+// Подключение/обмен данными — через RFCOMM (Windows.Devices.Bluetooth.Rfcomm).
+// ВАЖНО: Windows умеет подключаться только к СОПРЯЖЁННЫМ устройствам.
 public class WindowsBluetoothService : IBluetoothService
 {
 	// Множитель таймаута опроса устройств (по умолчанию, рекомендованный Windows)
@@ -19,12 +31,27 @@ public class WindowsBluetoothService : IBluetoothService
 	private readonly object _gate = new();
 	// Флаг: идёт ли сейчас опрос (inquiry) устройств
 	private bool _inquiryRunning;
+	// Признак установленного соединения с устройством
+	private bool _connected;
+	// Активный RFCOMM-сокет соединения (null, если соединения нет)
+	private StreamSocket? _socket;
+	// Объект для отмены фонового цикла чтения данных
+	private CancellationTokenSource? _readCts;
+
+	// Признак того, что соединение с устройством установлено
+	public bool IsConnected => _connected;
 
 	// Событие: найдено новое Bluetooth-устройство
 	public event EventHandler<BluetoothDeviceInfo>? DeviceDiscovered;
 
 	// Событие: поиск завершён
 	public event EventHandler? DiscoveryFinished;
+
+	// Событие: получена строка данных от устройства
+	public event EventHandler<string>? DataReceived;
+
+	// Событие: изменилось состояние подключения
+	public event EventHandler<bool>? ConnectionChanged;
 
 	// На Windows разрешения спрашивать не нужно — всегда возвращаем успех
 	public Task<bool> RequestPermissionsAsync() => Task.FromResult(true);
@@ -67,7 +94,107 @@ public class WindowsBluetoothService : IBluetoothService
 		DiscoveryFinished?.Invoke(this, EventArgs.Empty);
 	}
 
-	// Фоновый метод опроса устройств
+	// Подключение к устройству по адресу (RFCOMM Serial Port)
+	public async Task<bool> ConnectAsync(BluetoothDeviceInfo device)
+	{
+		// Если уже подключены — повторно не подключаемся
+		if (_socket is not null)
+			return true;
+
+		// Преобразуем строку адреса «AA:BB:CC:DD:EE:FF» обратно в 64-битное число для WinRT
+		var address = ParseAddress(device.Address);
+		// Если адрес некорректный — сразу сообщаем о неудаче
+		if (address == 0)
+			return false;
+
+		// Обрабатываем ошибки подключения
+		try
+		{
+			// Получаем объект устройства Windows по его Bluetooth-адресу
+			var btDevice = await BluetoothDevice.FromBluetoothAddressAsync(address);
+			// Если устройство не найдено в системе — выходим
+			if (btDevice is null)
+				return false;
+
+			// Ищем RFCOMM-сервис Serial Port (принудительный опрос, без кэша)
+			var servicesResult = await btDevice.GetRfcommServicesForIdAsync(RfcommServiceId.SerialPort, BluetoothCacheMode.Uncached);
+			// Берём первый найденный сервис
+			var service = servicesResult?.Services.FirstOrDefault();
+			// Если сервиса нет (устройство не сопряжено и/или не поддерживает SPP) — выходим
+			if (service is null)
+				return false;
+
+			// Создаём потоковый сокет для обмена данными
+			var socket = new StreamSocket();
+			// Устанавливаем соединение с сервисом устройства (разрешена нулевая аутентификация — обычный SPP)
+			await socket.ConnectAsync(service.ConnectionHostName, service.ConnectionServiceName, SocketProtectionLevel.BluetoothEncryptionAllowNullAuthentication);
+
+			// Сохраняем сокет и фиксируем статус подключения
+			_socket = socket;
+			_connected = true;
+			// Оповещаем подписчиков: соединение установлено
+			ConnectionChanged?.Invoke(this, true);
+			// Запускаем фоновый цикл чтения входящих данных
+			StartReadLoop(socket);
+			// Подключение успешно
+			return true;
+		}
+		catch (Exception ex)
+		{
+			// Выводим причину в отладчик для диагностики
+			System.Diagnostics.Debug.WriteLine($"Bluetooth connect error: {ex}");
+			// Сбрасываем флаг подключения
+			_connected = false;
+			// Оповещаем подписчиков: соединение не установлено
+			ConnectionChanged?.Invoke(this, false);
+			// Возвращаем неудачу
+			return false;
+		}
+	}
+
+	// Отключение от устройства
+	public Task DisconnectAsync()
+	{
+		// Отменяем фоновый цикл чтения, если он запущен
+		_readCts?.Cancel();
+		// Забираем сокет и обнуляем ссылку, чтобы закрытие не помешало повторному подключению
+		var socket = _socket;
+		// Обнуляем поле сокета
+		_socket = null;
+		// Если сокет был
+		if (socket is not null)
+		{
+			// Закрываем соединение
+			try { socket.Dispose(); }
+			// Игнорируем ошибки закрытия
+			catch (Exception) { }
+		}
+		// Сбрасываем флаг подключения
+		_connected = false;
+		// Оповещаем подписчиков: соединение закрыто
+		ConnectionChanged?.Invoke(this, false);
+		// Возвращаем завершённую задачу
+		return Task.CompletedTask;
+	}
+
+	// Отправка текстовой строки устройству (дописывается символ перевода строки)
+	public async Task SendDataAsync(string data)
+	{
+		// Если соединения нет — выбрасываем исключение
+		if (_socket is null)
+			throw new InvalidOperationException("Нет подключения к устройству.");
+
+		// Кодируем сообщение + «перевод строки» в байты UTF-8
+		var bytes = Encoding.UTF8.GetBytes(data + "\n");
+		// Создаём писатель данных для потока вывода сокета
+		var writer = new DataWriter(_socket.OutputStream);
+		// Записываем байты в писатель
+		writer.WriteBytes(bytes);
+		// Отправляем данные в эфир и дожидаемся завершения отправки
+		await writer.StoreAsync();
+	}
+
+	// Фоновый метод опроса устройств (получен из discovery-части, не трогаем)
 	private async Task RunInquiryAsync()
 	{
 		// Оборачиваем в try/finally, чтобы гарантированно освободить ресурсы
@@ -148,14 +275,67 @@ public class WindowsBluetoothService : IBluetoothService
 		}
 	}
 
+	// Запуск фонового цикла чтения входящих данных
+	private void StartReadLoop(StreamSocket socket)
+	{
+		// Отменяем предыдущий цикл, если он был
+		_readCts?.Cancel();
+		// Создаём новый токен отмены
+		_readCts = new CancellationTokenSource();
+		// Запоминаем токен локально
+		var token = _readCts.Token;
+		// Запускаем чтение в фоновом потоке (fire-and-forget)
+		_ = Task.Run(() => ReadLoopAsync(socket, token));
+	}
+
+	// Фоновый цикл чтения построчных данных из сокета
+	private async Task ReadLoopAsync(StreamSocket socket, CancellationToken token)
+	{
+		// Оборачиваем входящий поток сокета в StreamReader с кодировкой UTF-8
+		var reader = new StreamReader(socket.InputStream.AsStreamForRead(), Encoding.UTF8);
+		// Обрабатываем возможные ошибки и отмену
+		try
+		{
+			// Читаем, пока не запросили отмену
+			while (!token.IsCancellationRequested)
+			{
+				// Читаем очередную строку (до '\n') из потока
+				var line = await reader.ReadLineAsync(token);
+				// Если поток закрыт (null) — выходим из цикла
+				if (line is null)
+					break;
+				// Пропускаем пустые строки
+				if (line.Length > 0)
+					// Передаём строку подписчикам
+					DataReceived?.Invoke(this, line);
+			}
+		}
+		catch (OperationCanceledException)
+		{
+			// Чтение отменено при отключении — нормальная ситуация
+		}
+		catch (Exception)
+		{
+			// Ошибка чтения = потеря соединения (устройство отключилось)
+		}
+		finally
+		{
+			// Сбрасываем флаг подключения
+			_connected = false;
+			// Оповещаем подписчиков: соединение потеряно/закрыто
+			ConnectionChanged?.Invoke(this, false);
+		}
+	}
+
 	// Публикация одного устройства подписчикам события
 	private void PublishDevice(BLUETOOTH_DEVICE_INFO deviceInfo)
 	{
 		// Создаём нашу модель устройства
 		var info = new BluetoothDeviceInfo
 		{
-			// Формируем МАС-адрес из 64-битного числа в привычный формат AA:BB:CC:DD:EE:FF
+			// Имя устройства из структуры WINAPI
 			Name = deviceInfo.szName,
+			// Формируем МАС-адрес из 64-битного числа в привычный формат AA:BB:CC:DD:EE:FF
 			Address = FormatAddress(deviceInfo.Address),
 			// Считаем устройство «сопряжённым», если система его помнит или подтвердила
 			IsBonded = deviceInfo.fRemembered || deviceInfo.fAuthenticated
@@ -187,6 +367,31 @@ public class WindowsBluetoothService : IBluetoothService
 			(address >> 8) & 0xFF,
 			// Младший байт (биты 0..7)
 			address & 0xFF);
+	}
+
+	// Обратное преобразование строки «AA:BB:CC:DD:EE:FF» в 64-битный адрес
+	private static ulong ParseAddress(string address)
+	{
+		// Разбиваем адрес на шесть байтовых групп
+		var parts = address.Split(':');
+		// Если формат не тот (не 6 групп) — возвращаем 0 (невалидный адрес)
+		if (parts.Length != 6)
+			return 0;
+
+		// Переменная для накопления результата
+		ulong value = 0;
+		// Проходим по всем группам адреса
+		foreach (var part in parts)
+		{
+			// Пытаемся разобрать группу как шестнадцатеричный байт
+			if (!byte.TryParse(part, System.Globalization.NumberStyles.HexNumber, null, out var b))
+				// Если разбор не удался — адрес невалиден
+				return 0;
+			// Учитываем байт в результирующем адресе (сдвиг на 8 бит)
+			value = (value << 8) | b;
+		}
+		// Возвращаем адрес
+		return value;
 	}
 
 	// P/Invoke: импорт функции BluetoothFindFirstDevice из библиотеки bthprops.cpl

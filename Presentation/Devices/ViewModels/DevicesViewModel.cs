@@ -58,14 +58,44 @@ public partial class DevicesViewModel : ObservableObject, IDisposable
 	// Команда подключения к выбранному устройству. CanExecute из метода CanConnect
 	[RelayCommand(CanExecute = nameof(CanConnect))]
 	// Метод команды: обрабатывает нажатие кнопки «Подключиться»
-	private void Connect()
+	private async Task Connect()
 	{
 		// Если устройство не выбрано — выходим (защита от ошибок)
 		if (SelectedDevice is null)
 			return;
 
-		// Показываем заглушку: само подключение ещё не реализовано
-		StatusMessage = $"Подключение к {SelectedDevice.Name} пока не реализовано";
+		// Если в этот момент идёт поиск — останавливаем его (во время поиска соединение не установить)
+		if (IsSearching)
+			await StopSearchAsync();
+
+		// Обрабатываем ошибки самого подключения
+		try
+		{
+			// Вызываем подключение к выбранному устройству через сервис
+			var ok = await _bluetoothService.ConnectAsync(SelectedDevice.Device);
+			// Если подключение не удалось
+			if (!ok)
+			{
+				// Сообщаем пользователю, что подключение не состоялось
+				StatusMessage = "Не удалось подключиться. Убедитесь, что устройство включено и доступно.";
+				return;
+			}
+		}
+		catch (Exception ex)
+		{
+			// Показываем текст ошибки подключения
+			StatusMessage = $"Ошибка подключения: {ex.Message}";
+			return;
+		}
+
+		// Подключение успешно — открываем экран чата, передавая ему выбранное устройство
+		StatusMessage = "Подключено. Открываю чат...";
+		// Используем Shell-навигацию по маршруту «chat» с параметром Device
+		await Shell.Current.GoToAsync("chat", new Dictionary<string, object>
+		{
+			// Передаём данные устройства в режим чата
+			["Device"] = SelectedDevice.Device
+		});
 	}
 
 	// Проверка, можно ли выполнять команду Connect (только если выбранное устройство существует)
