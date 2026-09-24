@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:views="clr-namespace:MauiBluethooth.Presentation.Devices.Views"
+             xmlns:vm="clr-namespace:MauiBluethooth.Presentation.Devices.ViewModels"
+             x:Class="MauiBluethooth.Presentation.Devices.Views.DevicesPage"
+             x:DataType="vm:DevicesViewModel"
+             Title="Устройства">
+
+    <Grid RowDefinitions="Auto,Auto,*" Padding="16" RowSpacing="12">
+        <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+            <Button Text="{Binding SearchButtonText}"
+                    Command="{Binding ToggleSearchCommand}" />
+
+            <Button Grid.Column="1"
+                    Text="Подключиться"
+                    Command="{Binding ConnectCommand}" />
+        </Grid>
+
+        <Label Grid.Row="1"
+               Text="{Binding StatusMessage}"
+               FontSize="13"
+               TextColor="Gray" />
+
+        <CollectionView Grid.Row="2"
+                        ItemsSource="{Binding Devices}"
+                        SelectionMode="Single"
+                        SelectedItem="{Binding SelectedDevice}">
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="vm:DeviceItemViewModel">
+                    <views:DeviceItemView />
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+
+</ContentPage>

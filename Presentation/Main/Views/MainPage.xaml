@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:MauiBluethooth.Presentation.Main.ViewModels"
+             x:Class="MauiBluethooth.Presentation.Main.Views.MainPage"
+             x:DataType="vm:MainViewModel"
+             Title="Главная">
+
+    <Grid Padding="16">
+        <VerticalStackLayout Spacing="12" VerticalOptions="Center">
+            <Label Text="Bluetooth Robot"
+                   Style="{StaticResource Headline}"
+                   HorizontalOptions="Center" />
+
+            <Label Text="Поиск Bluetooth 2.0 устройств и подключение к ним"
+                   Style="{StaticResource SubHeadline}"
+                   HorizontalOptions="Center" />
+
+            <Button Text="Устройства"
+                    Command="{Binding GoToDevicesCommand}"
+                    HorizontalOptions="Center"
+                    Margin="0,24,0,0" />
+        </VerticalStackLayout>
+    </Grid>
+
+</ContentPage>

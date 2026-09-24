@@ -1,0 +1,7 @@
+## Помехи сборки
+bin/
+obj/
+*.user
+
+## Мусор macOS
+.DS_Store
