@@ -12,4 +12,14 @@
 	<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
 	<uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+
+	<!-- Разрешение на использование камеры. Объявляется в манифесте, потому что
+	     android.permission.CAMERA относится к группе dangerous: без него вызов камеры
+	     всегда завершается ошибкой, даже если разрешение выдано в настройках -->
+	<uses-permission android:name="android.permission.CAMERA" />
+
+	<!-- uses-feature с required="false" означает: приложение умеет работать и без камеры
+	     (например, только с Bluetooth), поэтому Google Play не запретит установку на таких устройствах.
+	     Само разрешение при этом всё равно запрашивается у пользователя в рантайме -->
+	<uses-feature android:name="android.hardware.camera.any" android:required="false" />
 </manifest>

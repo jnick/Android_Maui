@@ -34,7 +34,11 @@
 
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
-		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">21.0</SupportedOSPlatformVersion>
+		<!-- Минимальная версия Android для этого проекта.
+		     Поднята с 21.0 до 24.0 (Android 7.0), потому что CameraX требует API 21+,
+		     а актуальная версия пакета Xamarin.AndroidX.Camera 1.6.x рассчитана на API 24+.
+		     Устройства ниже Android 7 приложение теперь просто не установят -->
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
 		<TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
 	</PropertyGroup>
@@ -61,6 +65,34 @@
 		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
 		<PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
+	</ItemGroup>
+
+	<!-- Пакеты камеры подключаются ТОЛЬКО для Android-сборки.
+	     Условие нужно, потому что эти Xamarin.AndroidX-пакеты не имеют сборок под net10.0-windows:
+	     при сборке Windows они вызвали бы ошибку восстановления пакетов -->
+	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+
+		<!-- Camera2: мост к системному Camera2 API. Через него CameraX получает список камер,
+		     проверяет их наличие (HasCamera) и открывает устройство -->
+		<PackageReference Include="Xamarin.AndroidX.Camera.Camera2" Version="1.6.2" />
+
+		<!-- Core: базовые классы CameraX — IImageProxy (сырой кадр), ImageAnalysis и Preview (use case'ы).
+		     Именно отсюда берутся классы, которые мы используем в AndroidCameraService -->
+		<PackageReference Include="Xamarin.AndroidX.Camera.Core" Version="1.6.2" />
+
+		<!-- Lifecycle: привязка камеры к жизненному циклу Activity.
+		     Без него невозможно вызвать BindToLifecycle, то есть открыть камеру -->
+		<PackageReference Include="Xamarin.AndroidX.Camera.Lifecycle" Version="1.6.2" />
+
+		<!-- View: нативный контрол PreviewView, в который CameraX выводит картинку.
+		     Его наш CameraPreviewHandler подставляет вместо абстрактного MAUI-контрола -->
+		<PackageReference Include="Xamarin.AndroidX.Camera.View" Version="1.6.2" />
+
+		<!-- Collection.Ktx и Fragment.Ktx: расширения Kotlin-коллекций и Fragment'ов.
+		     Подключаются вместе с CameraX, потому что тот использует их внутри себя,
+		     а при отсутствии одной из зависимостей сборка Android не проходит -->
+		<PackageReference Include="Xamarin.AndroidX.Collection.Ktx" Version="1.6.0.1" />
+		<PackageReference Include="Xamarin.AndroidX.Fragment.Ktx" Version="1.9.0" />
 	</ItemGroup>
 
 </Project>

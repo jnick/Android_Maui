@@ -6,6 +6,10 @@ using MauiBluethooth.Platforms.Android.Services;
 // Подключаем Android-реализацию Bluetooth-сервиса (используется под #if ANDROID)
 using MauiBluethooth.Platforms.Windows.Services;
 #endif
+// Подключаем ViewModel экрана камеры для регистрации в DI
+using MauiBluethooth.Presentation.Camera.ViewModels;
+// Подключаем страницу и контролы экрана камеры для регистрации в DI и handlers
+using MauiBluethooth.Presentation.Camera.Views;
 // Подключаем ViewModel экрана чата для регистрации в DI
 using MauiBluethooth.Presentation.Chat.ViewModels;
 // Подключаем страницу экрана чата для регистрации в DI
@@ -45,6 +49,20 @@ public static class MauiProgram
 				fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
 				// Регистрируем полужирный шрифт OpenSans под именем OpenSansSemibold
 				fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
+			})
+			// Регистрируем кастомные handler'ы — так MAUI узнаёт, какой нативный элемент
+			// использовать для наших кроссплатформенных контролов
+			.ConfigureMauiHandlers(handlers =>
+			{
+				// Handler камеры реализован только для Android и Windows.
+				// На других платформах (iOS) нативного элемента в проекте нет,
+				// и без директивы условной компиляции сборка iOS упала бы на необъявленном типе
+#if ANDROID || WINDOWS
+
+				// Связываем наш контрол CameraPreview с нативной реализацией:
+				// PreviewView (CameraX) на Android, MediaPlayerElement на Windows
+				handlers.AddHandler(typeof(CameraPreview), typeof(CameraPreviewHandler));
+#endif
 			});
 
 		// Регистрируем главную ViewModel как singleton (один экземпляр на всё приложение)
@@ -56,6 +74,13 @@ public static class MauiProgram
 		builder.Services.AddSingleton<DevicesViewModel>();
 		// Регистрируем страницу устройств как singleton
 		builder.Services.AddSingleton<DevicesPage>();
+		// Регистрируем ViewModel экрана камеры как singleton
+		builder.Services.AddSingleton<CameraViewModel>();
+
+		// Регистрируем страницу камеры как singleton.
+		// Именно singleton, а не transient: страница держит нативный PreviewView, и при каждом
+		// создании нового экземпляра камера открывалась бы заново (или, наоборот, не закрывалась бы)
+		builder.Services.AddSingleton<CameraPage>();
 
 		// Регистрируем ViewModel экрана чата как singleton
 		builder.Services.AddSingleton<ChatViewModel>();
@@ -66,10 +91,18 @@ public static class MauiProgram
 #if ANDROID
 		// На Android используем Android-реализацию Bluetooth-сервиса
 		builder.Services.AddSingleton<IBluetoothService, AndroidBluetoothService>();
+
+		// На Android камеру обслуживает CameraX. Интерфейс и реализация — единственный экземпляр:
+		// App, CameraPage и ViewModel должны работать с одним и тем же сервисом,
+		// иначе они не видели бы состояние друг друга
+		builder.Services.AddSingleton<ICameraService, AndroidCameraService>();
 		// Иначе если сборка для Windows
 #elif WINDOWS
 		// На Windows используем Windows-реализацию Bluetooth-сервиса
 		builder.Services.AddSingleton<IBluetoothService, WindowsBluetoothService>();
+
+		// На Windows камеру обслуживает MediaCapture. Требования к регистрации те же: один экземпляр на приложение
+		builder.Services.AddSingleton<ICameraService, WindowsCameraService>();
 		// Конец условной компиляции
 #endif
 

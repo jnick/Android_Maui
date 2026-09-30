@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Экран камеры: живое видео с камеры + оверлей с рамками вокруг найденных объектов + панель управления.
+
+    Пространства имён, объявленные на корневом элементе ContentPage:
+      xmlns        — пространство MAUI по умолчанию: Grid, Label, Button, Picker, GraphicsView
+      xmlns:x      — расширения XAML: x:Class, x:Name, x:DataType
+      xmlns:camera — наше пространство имён, чтобы использовать собственный контрол CameraPreview
+      xmlns:vm     — пространство имён ViewModel'ов, нужно для x:DataType
+
+    Остальные атрибуты корневого элемента:
+      x:Class="MauiBluethooth.Presentation.Camera.Views.CameraPage"
+              — имя класса code-behind (CameraPage.xaml.cs), связывает XAML и код
+
+      x:DataType="vm:CameraViewModel"
+              — тип BindingContext. Включает проверку привязок ПРИ КОМПИЛЯЦИИ: опечатку в имени
+                свойства XAML-компилятор найдёт сразу, а не в рантайме
+
+      Title="Камера" — заголовок страницы (на Android показывается в панели сверху)
+
+      BackgroundColor="Black"
+              — чёрный фон: он же служит «подложкой», пока камера ещё не запущена,
+                и не даёт белым полосам на нечётных пропорциях кадра
+
+    ВНИМАНИЕ: внутри открывающего тега комментарии XML недопустимы — парсер XAML MAUI
+    (XamlC) не пропускает их между атрибутами. Поэтому все пояснения вынесены сюда.
+-->
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:camera="clr-namespace:MauiBluethooth.Presentation.Camera.Views"
+             xmlns:vm="clr-namespace:MauiBluethooth.Presentation.Camera.ViewModels"
+             x:Class="MauiBluethooth.Presentation.Camera.Views.CameraPage"
+             x:DataType="vm:CameraViewModel"
+             Title="Камера"
+             BackgroundColor="Black">
+
+    <!-- Корневой Grid: две строки.
+         RowDefinitions="*,Auto" — «*» означает «занять всё оставшееся место» (здесь видео),
+         «Auto» — «высота по содержимому» (здесь нижняя панель с кнопками) -->
+    <Grid RowDefinitions="*,Auto">
+
+        <!-- Строка 0: область видео. Внутри ещё Grid — элементы накладываются друг на друга -->
+        <Grid Grid.Row="0">
+
+            <!-- Собственно живое видео с камеры.
+                 Это наш кроссплатформенный контрол, который через handler подставляет
+                 нативный элемент: PreviewView на Android, MediaPlayerElement на Windows.
+
+                 x:Name="Preview"            — даём имя, чтобы обращаться к нему из кода страницы
+                 CameraService="{Binding CameraService}"
+                                         — передаём камерный сервис из ViewModel;
+                                           handler возьмёт у него нативный элемент предпросмотра
+                 HorizontalOptions/VerticalOptions = FillAndExpand
+                                         — растягиваем видео на всё доступное место;
+                                           наполнение по обеим осям обязательно, иначе элемент
+                                           займёт лишь часть строки и оверлей сместится -->
+            <camera:CameraPreview x:Name="Preview"
+                                   CameraService="{Binding CameraService}"
+                                   HorizontalOptions="FillAndExpand"
+                                   VerticalOptions="FillAndExpand" />
+
+            <!-- Поверх видео — слой для рисования рамок вокруг объектов.
+                 GraphicsView — универсальный холст MAUI, умеет рисовать примитивами
+                 (линии, прямоугольники, текст).
+
+                 x:Name="OverlayView"      — имя нужно странице, чтобы вызвать Invalidate()
+                                             при смене геометрии кадра
+                 InputTransparent="True"  — оверлей не перехватывает касания. Без этого нажатия
+                                             (в том числе системный жест «назад») не доходили бы до страницы
+                 FillAndExpand            — растягиваем на ту же область, что и видео: только при
+                                             одинаковом размере оверлей совпадёт с картинкой по координатам -->
+            <GraphicsView x:Name="OverlayView"
+                           InputTransparent="True"
+                           HorizontalOptions="FillAndExpand"
+                           VerticalOptions="FillAndExpand" />
+
+            <!-- Крутилка загрузки поверх видео на время запуска камеры.
+                 IsRunning="{Binding IsStarting}" — крутится ровно пока ViewModel запускает камеру
+                 Color="White"                   — заметен и на чёрном фоне, и на тёмной картинке камеры
+                 Center/Center                  — центрируем в области видео -->
+            <ActivityIndicator IsRunning="{Binding IsStarting}"
+                               Color="White"
+                               HorizontalOptions="Center"
+                               VerticalOptions="Center" />
+        </Grid>
+
+        <!-- Строка 1: нижняя панель управления.
+             Padding="16"  — отступы от краёв, чтобы элементы не липли к границам экрана
+             Spacing="8"   — промежуток между элементами панели
+             BackgroundColor="Black" — визуально отделяет панель от яркой картинки камеры -->
+        <VerticalStackLayout Grid.Row="1"
+                             Padding="16"
+                             Spacing="8"
+                             BackgroundColor="Black">
+
+            <!-- Выбор камеры из списка (задняя/фронтальная, либо список веб-камер в Windows).
+                 Показывается только когда камер больше одной — этим управляет ViewModel.
+
+                 ItemsSource="{Binding CameraOptions}"
+                       — источник данных: ObservableCollection<CameraOption> из ViewModel
+                 SelectedItem="{Binding SelectedCamera}"
+                       — двусторонняя привязка: когда пользователь выберет камеру,
+                         сеттер SelectedCamera переключит её в сервисе
+                 IsVisible="{Binding IsCameraPickerVisible}"
+                       — прячем Picker, если камера всего одна (выбирать нечего)
+                 TextColor/TitleColor = White
+                       — стандартный Picker чёрный, и на чёрном фоне его бы не было видно -->
+            <Picker Title="Камера"
+                    ItemsSource="{Binding CameraOptions}"
+                    SelectedItem="{Binding SelectedCamera}"
+                    IsVisible="{Binding IsCameraPickerVisible}"
+                    TextColor="White"
+                    TitleColor="White" />
+
+            <!-- Текстовый статус: «Запуск камеры...», «Камера запущена», текст ошибки и т.д.
+                 TextColor="White"                 — белый текст на чёрной панели
+                 HorizontalTextAlignment="Center" — по центру так статус читается легче -->
+            <Label Text="{Binding StatusText}"
+                   TextColor="White"
+                   HorizontalTextAlignment="Center" />
+
+            <!-- Кнопка остановки камеры.
+                 Command="{Binding StopCameraCommand}"
+                       — команда сгенерирована атрибутом [RelayCommand] во ViewModel
+                 IsVisible="{Binding IsRunning}"
+                       — прячем кнопку, когда камера и так не запущена -->
+            <Button Text="Остановить"
+                    Command="{Binding StopCameraCommand}"
+                    IsVisible="{Binding IsRunning}" />
+
+            <!-- Кнопка открытия системных настроек.
+                 Нужна, когда пользователь уже отказал в доступе к камере: система больше не покажет
+                 диалог, и разрешение можно выдать только вручную.
+
+                 Command="{Binding OpenSettingsCommand}"
+                       — команда вызывает AppInfo.ShowSettingsUI()
+                 IsVisible="{Binding ShowPermissionSettings}"
+                       — показываем только при отказе в разрешении (флаг выставляет ViewModel) -->
+            <Button Text="Открыть настройки"
+                    Command="{Binding OpenSettingsCommand}"
+                    IsVisible="{Binding ShowPermissionSettings}" />
+        </VerticalStackLayout>
+    </Grid>
+
+</ContentPage>

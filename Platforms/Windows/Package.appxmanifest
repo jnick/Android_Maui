@@ -41,6 +41,10 @@
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <!-- Разрешение на доступ к веб-камере. Без него MediaCapture не найдёт ни одной камеры:
+         FindAllAsync вернёт пустой список, и приложение покажет «Камера не найдена».
+         В Windows это DeviceCapability (объявление возможности), а не разрешение: диалога с вопросом нет -->
+    <DeviceCapability Name="webcam" />
     <DeviceCapability Name="bluetooth" />
   </Capabilities>
 

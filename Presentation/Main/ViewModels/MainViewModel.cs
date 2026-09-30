@@ -15,4 +15,15 @@ public partial class MainViewModel
 		// Используем Shell-навигацию: открываем маршрут «devices»
 		await Shell.Current.GoToAsync("devices");
 	}
+
+	// Атрибут генерирует команду GoToCameraCommand для привязки к кнопке в XAML
+	[RelayCommand]
+
+	// Метод команды — переход к экрану камеры
+	private async Task GoToCamera()
+	{
+		// Открываем маршрут «camera», зарегистрированный в AppShell.
+		// Благодаря async Shell сам выполнит переход со стеком навигации и анимацией
+		await Shell.Current.GoToAsync("camera");
+	}
 }

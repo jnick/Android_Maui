@@ -20,6 +20,11 @@
                     Command="{Binding GoToDevicesCommand}"
                     HorizontalOptions="Center"
                     Margin="0,24,0,0" />
+
+            <!-- Кнопка перехода к экрану камеры -->
+            <Button Text="Камера"
+                    Command="{Binding GoToCameraCommand}"
+                    HorizontalOptions="Center" />
         </VerticalStackLayout>
     </Grid>
 
