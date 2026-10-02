@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Экран заданий: журнал того, что распознавание обнаружило за время работы.
+
+    ЗАЧЕМ ЭТО НУЖНО, РАЗ ЕСТЬ РАМКИ НА ВИДЕО.
+    Рамки показывают текущий момент, и они исчезают, как только объект уйдёт из кадра.
+    Но часто интересует обратное: «кто тут был, пока меня не было» и «что система
+    вообще умеет находить в этой комнате». Журнал отвечает на оба вопроса:
+    строки появляются, когда содержимое кадра меняется, и остаются после этого.
+
+    Пространства имён:
+      xmlns:x      — расширения XAML: x:Class, x:DataType
+      xmlns:vm     — ViewModel'ы камеры (источник данных)
+      xmlns:models — наши модели распознавания, нужны для x:DataType в DataTemplate
+-->
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:MauiBluethooth.Presentation.Camera.ViewModels"
+             xmlns:models="clr-namespace:MauiBluethooth.Models.Detection"
+             x:Class="MauiBluethooth.Presentation.Detection.Views.TasksPage"
+             x:DataType="vm:CameraViewModel"
+             Title="Задания">
+
+    <!-- Фон страницы тёмный: тот же, что у диагностики, чтобы два экрана выглядели парой -->
+    <Grid RowDefinitions="Auto,*">
+        <VerticalStackLayout Grid.Row="0" Padding="16" Spacing="4">
+            <Label Text="Журнал распознавания"
+                   TextColor="White"
+                   FontSize="20"
+                   FontAttributes="Bold" />
+
+            <!-- Пояснение, почему строк мало: журнал пополняется только при изменении
+                 результата, а не на каждом кадре. Иначе список ушёл бы вниз на десятки
+                 тысяч строк и стал бы бесполезным -->
+            <Label Text="Строка появляется, когда набор найденного изменился: кто-то вошёл, вышел или сменился. Постоянные кадры не дублируются."
+                   TextColor="Gray"
+                   FontSize="12" />
+        </VerticalStackLayout>
+
+        <!-- Журнал. RefreshView нужен для кнопки «обновить»: при новом кадре данные
+             и так приходят сами, а обновление по кнопке даёт пользователю
+             возможность получить снимок из последнего кадра по требованию -->
+        <RefreshView Grid.Row="1"
+                     Command="{Binding RefreshTasksCommand}"
+                     IsRefreshing="{Binding IsTasksRefreshing}">
+            <CollectionView ItemsSource="{Binding DetectionHistory}">
+                <CollectionView.EmptyView>
+                    <!-- Показывается, когда журнал пуст: то есть распознавание ещё
+                         ничего не нашло. Без этого пользователь видел бы просто
+                         белый экран и не понимал бы, сломано что-то или нет -->
+                    <VerticalStackLayout Padding="32" Spacing="8">
+                        <Label Text="Пока пусто"
+                               TextColor="White"
+                               FontSize="16"
+                               HorizontalTextAlignment="Center" />
+                        <Label Text="Откройте раздел «Камера» и наведите её на объект. Строка появится, как только набор найденного изменится."
+                               TextColor="Gray"
+                               FontSize="12"
+                               HorizontalTextAlignment="Center" />
+                    </VerticalStackLayout>
+                </CollectionView.EmptyView>
+
+                <CollectionView.ItemTemplate>
+                    <!-- Явный x:DataType обязателен: без него XamlC не может проверить
+                         имена свойств привязки и выдаёт MAUIG1001 -->
+                    <DataTemplate x:DataType="models:DetectionTaskResult">
+                        <VerticalStackLayout Padding="16,10"
+                                             BackgroundColor="#2A2A2A">
+                            <!-- Верхняя строка: сводка результата и время находки -->
+                            <Grid ColumnDefinitions="*,Auto">
+
+                                <!-- Сводка: «Найдено: 3» или «Найдено 1: лицо».
+                                     SummaryText берёт на себя и единственное число,
+                                     и пустой результат -->
+                                <Label Text="{Binding SummaryText}"
+                                       TextColor="White"
+                                       FontSize="15" />
+
+                                <!-- Время находки. Не показываем абсолютное время суток:
+                                     для этой задачи важнее порядок событий,
+                                     а он и так виден сверху вниз -->
+                                <Label Grid.Column="1"
+                                       Text="{Binding TimestampMilliseconds}"
+                                       TextColor="Gray"
+                                       FontSize="12" />
+                            </Grid>
+
+                            <!-- Список названий: «person, car, dog».
+                                 Прячем, если находок не было. Флаг HasObjects вместо
+                                 конвертера «число больше нуля»: конвертеров в проекте нет,
+                                 а заводить целый класс ради одного места дороже,
+                                 чем одно булево свойство в модели -->
+                            <Label Text="{Binding LabelsText}"
+                                   TextColor="LightGreen"
+                                   FontSize="13"
+                                   IsVisible="{Binding HasObjects}" />
+
+                            <!-- Модель, которая дала результат.
+                                 Без неё непонятно, откуда взялись находки:
+                                 YuNet ищет только лица и никогда не найдёт «person» -->
+                            <Label Text="{Binding ModelDisplayName}"
+                                   TextColor="Gray"
+                                   FontSize="11" />
+                        </VerticalStackLayout>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+        </RefreshView>
+    </Grid>
+</ContentPage>

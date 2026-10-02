@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Экран диагностики распознавания: показывает, на что уходит время при обработке одного кадра.
+
+    ЗАЧЕМ НУЖНА ЭТА СТРАНИЦА, А НЕ ПРОСТО ЛОГ.
+    Пользователю кажется, что «распознавание тормозит», но по картинке это определить
+    невозможно: непонятно, где именно теряется время. А вариантов ровно четыре:
+      — конвертация кадра в формат BGR;
+      — поворот и отражение кадра;
+      — сама нейросеть (а у неё внутри шагов ещё больше);
+      — подготовка результата и список рамок.
+    Эта страница разбивает общее время на эти куски, и становится видно, что именно
+    тормозит. Например, на слабом телефоне чаще всего виноват поворот: он копирует
+    весь кадр, тогда как сама сеть на int8 считает быстро.
+
+    Пространства имён:
+      xmlns:x   — расширения XAML: x:Class, x:DataType
+      xmlns:vm  — пространство имён ViewModel'ов для x:DataType
+
+    Обратите внимание: здесь нет живого видео и нет кнопок управления камерой.
+    Диагностика — это чтение, а не управление, и она ничего не меняет в состоянии камеры
+-->
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:MauiBluethooth.Presentation.Camera.ViewModels"
+             xmlns:models="clr-namespace:MauiBluethooth.Models.Detection"
+             x:Class="MauiBluethooth.Presentation.Detection.Views.DiagnosticsPage"
+             x:DataType="vm:CameraViewModel"
+             Title="Диагностика">
+
+    <!-- Фон страницы: чуть темнее белого, чтобы белый текст читался без напряга -->
+    <ScrollView BackgroundColor="#1E1E1E">
+        <VerticalStackLayout Padding="16" Spacing="12">
+
+            <!-- Идентификатор модели, для которой сняты замеры.
+                 Без него непонятно, к чему относятся цифры ниже: при смене модели
+                 они меняются в разы -->
+            <Label Text="{Binding SelectedDetectionModel.DisplayName}"
+                   TextColor="White"
+                   FontSize="20"
+                   FontAttributes="Bold" />
+
+            <!-- Подсказка: цифры обновляются на каждом обработанном кадре,
+                 то есть это не «разовый замер», а живая картина -->
+            <Label Text="Замеры последнего обработанного кадра. Обновляются постоянно."
+                   TextColor="Gray"
+                   FontSize="12" />
+
+            <!-- Общее время обработки кадра: главная цифра страницы.
+                 Text="{Binding LastDiagnostics.TotalText}" берёт готовое свойство
+                 из DetectionDiagnostics, где значение уже округлено до сотых -->
+            <Border Padding="12"
+                    StrokeShape="RoundRectangle 8"
+                    Stroke="DimGray"
+                    BackgroundColor="#2A2A2A">
+                <VerticalStackLayout Spacing="4">
+                    <Label Text="Всего на кадр"
+                           TextColor="Gray"
+                           FontSize="12" />
+                    <!-- Без StringFormat: свойство TotalText УЖЕ возвращает строку
+                         с единицами измерения («12.34 мс»). Если добавить сюда
+                         StringFormat с «мс», на экране получится «12.34 мс мс» -->
+                    <Label Text="{Binding LastDiagnostics.TotalText}"
+                           TextColor="White"
+                           FontSize="28"
+                           FontAttributes="Bold" />
+                    <Label Text="{Binding LastDiagnostics.Fps, StringFormat='{0:F1} кадр/с по сумме этапов'}"
+                           TextColor="Gray"
+                           FontSize="12" />
+                </VerticalStackLayout>
+            </Border>
+
+            <!-- Число найденных объектов на последнем кадре.
+                 Ноль здесь — не ошибка, а вполне нормальное состояние:
+                 в кадре может просто ничего не быть -->
+            <Label Text="{Binding LastDiagnostics.ObjectCount, StringFormat='Найдено объектов: {0}'}"
+                   TextColor="White"
+                   FontSize="16" />
+
+            <!-- Список этапов с временем каждого.
+                 CollectionView показывает этапы, которые детектор прислал вместе со снимком:
+                 их состав зависит от модели, поэтому он не зашит в интерфейс -->
+            <Label Text="Этапы обработки"
+                   TextColor="White"
+                   FontSize="16"
+                   FontAttributes="Bold"
+                   Margin="0,8,0,0" />
+
+            <CollectionView ItemsSource="{Binding LastDiagnostics.Stages}"
+                            HeightRequest="320">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate x:DataType="models:TimingStage">
+                        <Grid ColumnDefinitions="*,Auto" Padding="0,6"
+                              BackgroundColor="Transparent">
+
+                            <!-- Название этапа слева -->
+                            <Label Text="{Binding Name}"
+                                   TextColor="White"
+                                   FontSize="14" />
+
+                            <!-- Время справа, выравнено по правому краю:
+                                 так столбцы цифр совпадают и их легко сравнивать
+                                 глазами, что быстрее вычитывания в столбик -->
+                            <Label Grid.Column="1"
+                                   Text="{Binding Milliseconds, StringFormat='{0:F2} мс'}"
+                                   TextColor="LightGreen"
+                                   FontSize="14" />
+                        </Grid>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+
+            <!-- Пояснение про смысл столбца «всего».
+                 Его частая ошибка в понимании: сумма этапов НЕ равна времени,
+                 которое кадр ждал в очереди камеры. Между этапами есть ещё
+                 и вызовы из C#, которые не измеряются. Поэтому число здесь
+                 всегда чуть меньше реальной задержки, и это нормально -->
+            <Label Text="Сумма этапов — это время самих вычислений. Реальная задержка кадра выше: сюда не попали ни вызовы из C#, ни ожидание нового кадра от камеры."
+                   TextColor="Gray"
+                   FontSize="12" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

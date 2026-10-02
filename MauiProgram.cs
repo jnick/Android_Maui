@@ -14,6 +14,8 @@ using MauiBluethooth.Presentation.Camera.Views;
 using MauiBluethooth.Presentation.Chat.ViewModels;
 // Подключаем страницу экрана чата для регистрации в DI
 using MauiBluethooth.Presentation.Chat.Views;
+// Подключаем страницы раздела «Распознавание» для регистрации в DI
+using MauiBluethooth.Presentation.Detection.Views;
 // Подключаем ViewModel экрана устройств для регистрации в DI
 using MauiBluethooth.Presentation.Devices.ViewModels;
 // Подключаем страницу экрана устройств для регистрации в DI
@@ -22,6 +24,8 @@ using MauiBluethooth.Presentation.Devices.Views;
 using MauiBluethooth.Presentation.Main.ViewModels;
 // Подключаем главную страницу
 using MauiBluethooth.Presentation.Main.Views;
+// Подключаем сервисы распознавания: каталог моделей и сам детектор
+using MauiBluethooth.Services.Detection;
 // Подключаем интерфейс Bluetooth-сервиса
 using MauiBluethooth.Services;
 // Подключаем логирование Microsoft
@@ -76,6 +80,24 @@ public static class MauiProgram
 		builder.Services.AddSingleton<DevicesPage>();
 		// Регистрируем ViewModel экрана камеры как singleton
 		builder.Services.AddSingleton<CameraViewModel>();
+
+		// Страницы диагностики и заданий — singleton.
+		// Как и остальные страницы: у них нет собственного состояния,
+		// а данные они читают из CameraViewModel, который и так единственный.
+		// Регистрация нужна Shell для разрешения типа при переходе по маршруту
+		builder.Services.AddSingleton<DiagnosticsPage>();
+		builder.Services.AddSingleton<TasksPage>();
+
+		// Каталог моделей распознавания — singleton.
+		// Именно singleton, потому что каталог хранит пути к уже распакованным файлам:
+		// при новом экземпляре каждый файл распаковывался бы заново,
+		// а это десятки мегабайт лишнего ввода-вывода при каждом переключении модели
+		builder.Services.AddSingleton<ModelRegistry>();
+
+		// Детектор — singleton по той же причине: он держит в памяти сеть OpenCV
+		// весом в десятки мегабайт. Новый экземпляр на каждый кадр или на каждую страницу
+		// означал бы повторную загрузку модели
+		builder.Services.AddSingleton<ObjectDetector>();
 
 		// Регистрируем страницу камеры как singleton.
 		// Именно singleton, а не transient: страница держит нативный PreviewView, и при каждом

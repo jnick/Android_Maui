@@ -41,6 +41,22 @@
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
 		<TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
+
+		<!-- Приложение проверялось ТОЛЬКО на реальных Android-устройствах с 64-битным ARM.
+		     Ограничиваем набор ABI одним значением: в APK попадёт только lib/arm64-v8a,
+		     и ни на 32-битном устройстве, ни на x86_64-эмуляторе приложение не запустится.
+		     Это сделано намеренно — собирать и тестировать под эмулятором мы не планируем.
+		     Именно RuntimeIdentifiers, а не AndroidSupportedAbis: в .NET 10 Android-сабмитчер
+		     объявил AndroidSupportedAbis устаревшим (XA0036) и просит использовать это свойство.
+		     Побочный эффект: RuntimeIdentifiers участвует в восстановлении пакетов,
+		     поэтому лишний ABI не качается, а APK получается arm64-only -->
+		<RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">android-arm64</RuntimeIdentifiers>
+
+		<!-- Версии OpenCV фиксируем явно, потому что управляемая сборка OpenCvSharp и нативная
+		     библиотека ОБЯЗАНЫ совпадать по версии: несовпадение даст EntryPointNotFoundException
+		     при вызове любого метода, добавленного в одной из сборок, но отсутствующего в другой -->
+		<OpenCvSharpVersion>4.13.0.20260627</OpenCvSharpVersion>
+		<OpenCvSharpAndroidNativeVersion>4.13.0.45</OpenCvSharpAndroidNativeVersion>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -65,6 +81,27 @@
 		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
 		<PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
+
+		<!-- Управляемая часть OpenCV — общая для обеих платформ.
+		     Это только P/Invoke-обёртки над нативной libOpenCvSharpExtern: без нативной
+		     библиотеки пакет бесполезен, её подключаем отдельно для каждой платформы -->
+		<PackageReference Include="OpenCvSharp4" Version="$(OpenCvSharpVersion)" />
+	</ItemGroup>
+
+	<!-- Нативная библиотека OpenCV для Windows. Берём ПОЛНЫЙ пакет, а не .slim:
+	     .slim собран без модуля dnn, а нам нужен OpenCvSharp.Dnn.Net для запуска ONNX-моделей.
+	     Управляемый API мы используем тот же самый, что и на Android, поэтому код переносится один в один -->
+	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+		<PackageReference Include="OpenCvSharp4.runtime.win" Version="$(OpenCvSharpVersion)" />
+	</ItemGroup>
+
+	<!-- Нативная библиотека OpenCV для Android. Официального пакета OpenCvSharp под Android не существует,
+	     поэтому используем community-сборку Sdcb.OpenCvSharp4.mini.
+	     Нам нужен именно mini, а не full: в нём только core/imgproc/imgcodecs/dnn,
+	     а модуль objdetect (FaceDetectorYN, CascadeClassifier, ArUco) нам не нужен —
+	     декод выходов YuNet мы пишем сами в YuNetModel.cs, что заодно объясняет алгоритм студенту -->
+	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+		<PackageReference Include="Sdcb.OpenCvSharp4.mini.runtime.android-arm64" Version="$(OpenCvSharpAndroidNativeVersion)" />
 	</ItemGroup>
 
 	<!-- Пакеты камеры подключаются ТОЛЬКО для Android-сборки.
@@ -94,5 +131,42 @@
 		<PackageReference Include="Xamarin.AndroidX.Collection.Ktx" Version="1.6.0.1" />
 		<PackageReference Include="Xamarin.AndroidX.Fragment.Ktx" Version="1.9.0" />
 	</ItemGroup>
+
+	<!-- ===================================================================================
+	     Проверка нативной библиотеки OpenCV.
+
+	     Зачем нужен этот таргет. Ниже закомментировано, что пакет Sdcb.OpenCvSharp4.mini
+	     подключает libOpenCvSharpExtern.so в APK самостоятельно — ручной элемент
+	     AndroidNativeLibrary не нужен и только вызывал дубликат (XA4301).
+
+	     Но остаётся неприятный сценарий: если пакет не восстановился, версия сменилась
+	     или путь внутри пакета изменился, то .so молча не попадёт в сборку. Приложение
+	     запустится, камера включится, а первый же вызов Cv2 упадёт с DllNotFoundException
+	     без понятной причины. Поэтому проверяем файл сразу после восстановления пакетов
+	     и роняем сборку с внятным текстом.
+	     =================================================================================== -->
+
+	<!-- Путь к нативной библиотеке внутри NuGet-кеша. Версия вынесена в свойство выше -->
+	<PropertyGroup>
+		<OpenCvSharpAndroidNativeLibrary>$(NuGetPackageRoot)sdcb.opencvsharp4.mini.runtime.android-arm64\$(OpenCvSharpAndroidNativeVersion)\runtimes\linux-arm64\native\libOpenCvSharpExtern.so</OpenCvSharpAndroidNativeLibrary>
+	</PropertyGroup>
+
+	<Target Name="OpenCvSharpAndroidNativeCheck"
+			AfterTargets="Restore"
+			BeforeTargets="ResolveReferences"
+			Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+		<Error Condition="!Exists('$(OpenCvSharpAndroidNativeLibrary)')"
+			   Text="Не найдена нативная библиотека OpenCV: $(OpenCvSharpAndroidNativeLibrary). Выполните «dotnet restore» и проверьте, что пакет Sdcb.OpenCvSharp4.mini.runtime.android-arm64 версии $(OpenCvSharpAndroidNativeVersion) скачался." />
+		<Message Importance="high" Text="OpenCV: нативная библиотека на месте — $(OpenCvSharpAndroidNativeLibrary)" />
+	</Target>
+
+	<!-- Известное ограничение, которое мы сознательно не решаем.
+	     Сборка выдаёт предупреждение XA0141: у libOpenCvSharpExtern.so из пакета Sdcb
+	     выравнивание сегментов ELF равно 4096 байт, а для Android 16 требуется 65536.
+	     Проверено разбором ELF: все три PT_LOAD имеют align 0x1000.
+	     Последствие: на устройствах с Android 16 библиотека может не загрузиться.
+	     Обойти это в своём коде нельзя — нужно ждать пересборки пакета автором.
+	     Для Android 15 и ниже всё работает. Несовместимость пока только теоретическая:
+	     в пользовательском Android-версия API 36, а сам пакет собран под bionic/ARM64 -->
 
 </Project>

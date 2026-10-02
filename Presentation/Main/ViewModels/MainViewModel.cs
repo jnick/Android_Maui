@@ -26,4 +26,20 @@ public partial class MainViewModel
 		// Благодаря async Shell сам выполнит переход со стеком навигации и анимацией
 		await Shell.Current.GoToAsync("camera");
 	}
+
+	// Атрибут генерирует команду GoToDiagnosticsCommand для привязки к кнопке в XAML
+	[RelayCommand]
+
+	// Метод команды — переход к экрану диагностики распознавания.
+	//
+	// Экран доступен и с главной страницы, и с экрана камеры. Это не избыточность:
+	// с камеры переход делается в один тап во время работы с распознаванием,
+	// а с главной — чтобы посмотреть замеры, не включая камеру заново
+	private static Task GoToDiagnostics() => Shell.Current.GoToAsync("diagnostics");
+
+	// Атрибут генерирует команду GoToTasksCommand для привязки к кнопке в XAML
+	[RelayCommand]
+
+	// Метод команды — переход к журналу найденных объектов
+	private static Task GoToTasks() => Shell.Current.GoToAsync("tasks");
 }

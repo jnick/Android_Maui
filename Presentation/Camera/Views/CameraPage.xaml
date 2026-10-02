@@ -139,6 +139,108 @@
             <Button Text="Открыть настройки"
                     Command="{Binding OpenSettingsCommand}"
                     IsVisible="{Binding ShowPermissionSettings}" />
+
+            <!-- ===== Блок управления распознаванием ===== -->
+
+            <!-- Выбор модели распознавания из выпадающего списка.
+                 ItemsSource="{Binding DetectionModels}"
+                       — список моделей из каталога, приходит в ViewModel
+                 ItemDisplayBinding="{Binding DisplayName, StringFormat='{0}'}"
+                       — в списке показываем только читаемое название («Лицо · YuNet · int8»),
+                         а не технический идентификатор вида «yunet-int8»
+                 SelectedItem="{Binding SelectedDetectionModel}"
+                       — двусторонняя привязка: выбор пользователя вызывает смену модели.
+                         Сама смена асинхронная, поэтому интерфейс не блокируется
+                 IsEnabled="{Binding IsModelPickerEnabled}"
+                       — на время загрузки сети список блокируется: две параллельные
+                         загрузки моделей это лишняя память и лишние секунды работы -->
+            <Picker Title="Модель распознавания"
+                    ItemsSource="{Binding DetectionModels}"
+                    ItemDisplayBinding="{Binding DisplayName}"
+                    SelectedItem="{Binding SelectedDetectionModel}"
+                    IsVisible="{Binding IsDetectionEnabled}"
+                    TextColor="White"
+                    TitleColor="White" />
+
+            <!-- Переключатель распознавания: включить или выключить вычисления.
+                 Когда выключено, кадры не доходят до OpenCV вообще, а не просто
+                 игнорируются результаты. Экономит батарею -->
+            <HorizontalStackLayout Spacing="8"
+                                    HorizontalOptions="Center">
+                <Switch IsToggled="{Binding IsDetectionEnabled}" />
+                <Label Text="Распознавание"
+                       TextColor="White"
+                       VerticalOptions="Center" />
+            </HorizontalStackLayout>
+
+            <!-- Ползунок порога уверенности.
+                 Показывает, какие рамки считаются достаточно уверенными.
+                 Значение по умолчанию 0,5. MinimumValue/MaximumValue совпадают
+                 с границами в ObjectDetector: ползунок физически не даст
+                 выставить бессмысленные значения -->
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                <Label Text="Порог"
+                       TextColor="White"
+                       VerticalOptions="Center" />
+                <Slider Grid.Column="1"
+                        Minimum="{Binding MinScoreThreshold}"
+                        Maximum="{Binding MaxScoreThreshold}"
+                        Value="{Binding ScoreThreshold}"
+                        IsVisible="{Binding IsDetectionEnabled}" />
+            </Grid>
+
+            <!-- Подпись под ползунком: текущее значение в процентах.
+                 Проценты читаются человеку, а модель работает в долях единицы,
+                 поэтому конвертация в текст должна быть явной -->
+            <Label Text="{Binding ScoreThreshold, StringFormat='Порог: {0:P0}'}"
+                   TextColor="Gray"
+                   FontSize="12"
+                   HorizontalTextAlignment="Center"
+                   IsVisible="{Binding IsDetectionEnabled}" />
+
+            <!-- Строка состояния распознавания: сколько найдено и с какой скоростью.
+                 FPS — главный показатель, насколько модель тяжела для телефона -->
+            <Label Text="{Binding DetectionStatusText}"
+                   TextColor="White"
+                   HorizontalTextAlignment="Center" />
+
+            <Label Text="{Binding DetectionFps, StringFormat='{0:F1} кадр/с'}"
+                   TextColor="Gray"
+                   FontSize="12"
+                   HorizontalTextAlignment="Center" />
+
+            <!-- Индикатор загрузки модели.
+                 Пока модель читается с диска, список моделей заблокирован,
+                 а этот элемент объясняет пользователю, почему нельзя выбрать другую -->
+            <ActivityIndicator IsRunning="{Binding IsModelLoading}"
+                               Color="White"
+                               IsVisible="{Binding IsModelLoading}" />
+
+            <!-- Текст ошибки модели: несовместимость файла, нет модели в ресурсах и тому подобное.
+                 Отдельная метка, а не часть StatusText, потому что ошибка должна оставаться
+                 на экране, пока её не сменит успешная загрузка -->
+            <Label Text="{Binding ModelErrorText}"
+                   TextColor="OrangeRed"
+                   FontSize="12"
+                   IsVisible="{Binding HasModelError}" />
+
+            <!-- Переходы на страницы диагностики и заданий.
+                 Команды, а не события Clicked: в этом проекте вся навигация
+                 живёт в ViewModel, а страница только связывает. Иначе страница
+                 знала бы о маршрутах Shell, и её пришлось бы править при каждом
+                 переименовании
+
+                 Диагностика показывает замеры по этапам, задания — что именно
+                 и с каким результатом распознано -->
+            <HorizontalStackLayout Spacing="8"
+                                    HorizontalOptions="Center">
+                <Button Text="Диагностика"
+                        FontSize="12"
+                        Command="{Binding GoToDiagnosticsCommand}" />
+                <Button Text="Задания"
+                        FontSize="12"
+                        Command="{Binding GoToTasksCommand}" />
+            </HorizontalStackLayout>
         </VerticalStackLayout>
     </Grid>
 

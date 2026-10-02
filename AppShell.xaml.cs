@@ -4,6 +4,8 @@ using MauiBluethooth.Presentation.Devices.Views;
 using MauiBluethooth.Presentation.Camera.Views;
 // Подключаем пространство имён с представлениями раздела «Чат» (для регистрации маршрута)
 using MauiBluethooth.Presentation.Chat.Views;
+// Подключаем представления раздела «Распознавание»: диагностика и задания
+using MauiBluethooth.Presentation.Detection.Views;
 
 // Объявляем корневое пространство имён приложения
 namespace MauiBluethooth;
@@ -23,5 +25,11 @@ public partial class AppShell : Shell
 		Routing.RegisterRoute("camera", typeof(CameraPage));
 		// Регистрируем маршрут «chat» — по нему Shell открывает страницу ChatPage (GoToAsync("chat"))
 		Routing.RegisterRoute("chat", typeof(ChatPage));
+
+		// Регистрируем маршрут «diagnostics» — страница диагностики времени обработки кадра
+		Routing.RegisterRoute("diagnostics", typeof(DiagnosticsPage));
+
+		// Регистрируем маршрут «tasks» — журнал найденных объектов
+		Routing.RegisterRoute("tasks", typeof(TasksPage));
 	}
 }
