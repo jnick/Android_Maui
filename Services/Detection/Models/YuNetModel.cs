@@ -150,11 +150,22 @@ public sealed class YuNetModel : IDetectionModel
 
 		// Готовим массив под выходы сети.
 		// ВАЖНО: Forward не создаёт выходы сам — их нужно выделить заранее,
-		// передать массив и получить заполненные Mat. Метод, который возвращает
-		// готовый Mat[], здесь не подходит: он умеет отдавать только ОДИН выход
+		// передать массив и получить заполненные Mat. Причём это НЕ «массив из null»:
+		// managed-обёртка Forward проходит по массиву и читает у каждого элемента
+		// CvPtr ещё до нативного вызова, поэтому каждый слот обязан быть объектом Mat.
+		// Массив из null дал бы NullReferenceException внутри OpenCvSharp (в Select)
 		var outputs = new Mat[_layerNames.Length];
+		for (var i = 0; i < outputs.Length; i++)
+		{
+			outputs[i] = new Mat();
+		}
 		try
 		{
+			// Подаём подготовленный вход сети. Без SetInput сеть уйдёт в прямой
+			// проход без входа и упадёт на первом же кадре, поэтому blob из
+			// BlobFromImage обязан осесть именно здесь, а не остаться неиспользованным
+			_net.SetInput(blob);
+
 			// Просим ровно те двенадцать выходов, которые умеет читать декод
 			_net.Forward(outputs, _layerNames);
 
@@ -177,11 +188,13 @@ public sealed class YuNetModel : IDetectionModel
 				// Число ячеек у этого масштаба: 80², 40² или 20²
 				var cells = GridSizes[level] * GridSizes[level];
 
-				// Читаем четыре карты масштаба как плоские массивы чисел
-				var cls = DnnOutput.AsFloats(outputs[baseIndex + 0], cells, "cls");
-				var obj = DnnOutput.AsFloats(outputs[baseIndex + 1], cells, "obj");
-				var bbox = DnnOutput.AsFloats(outputs[baseIndex + 2], cells * 4, "bbox");
-				var kps = DnnOutput.AsFloats(outputs[baseIndex + 3], cells * LandmarkCount * LandmarkStride, "kps");
+				// Читаем четыре карты масштаба как плоские массивы чисел.
+				// Имя передаём настоящее, из списка выходов: если сеть не заполнила
+				// слот, в сообщении об ошибке будет виден именно слой «cls_8» и т.п.
+				var cls = DnnOutput.AsFloats(outputs[baseIndex + 0], cells, _layerNames[baseIndex + 0]);
+				var obj = DnnOutput.AsFloats(outputs[baseIndex + 1], cells, _layerNames[baseIndex + 1]);
+				var bbox = DnnOutput.AsFloats(outputs[baseIndex + 2], cells * 4, _layerNames[baseIndex + 2]);
+				var kps = DnnOutput.AsFloats(outputs[baseIndex + 3], cells * LandmarkCount * LandmarkStride, _layerNames[baseIndex + 3]);
 
 				// Шаг сетки для этого масштаба
 				var stride = Strides[level];

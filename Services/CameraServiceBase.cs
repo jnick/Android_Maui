@@ -91,7 +91,10 @@ public abstract class CameraServiceBase : ICameraService
 		catch (Exception exception)
 		{
 			// Любая ошибка платформы (нет камеры, устройство занято другим приложением) превращается
-			// в результат с текстом ошибки, а не в необработанное исключение, ломающее UI
+			// в результат с текстом ошибки, а не в необработанное исключение, ломающее UI.
+			// В отладчике дополнительно пишем полный стек: по одному Message не понять,
+			// где именно сломалось (разрешение, CameraX, создание анализатора, bind)
+			System.Diagnostics.Debug.WriteLine($"[CameraService] Старт камеры завершился ошибкой: {exception}");
 			return new CameraStartResult(false, exception.Message);
 		}
 		finally

@@ -153,9 +153,11 @@ public sealed class AndroidCameraService : CameraServiceBase
 
 		// Оборачиваем наш обработчик в Java-совместимый объект, понятный CameraX
 		_analyzer = new CameraAnalyzer(ProcessFrame);
+		System.Diagnostics.Debug.WriteLine($"[AndroidCameraService] Анализатор создан: {_analyzer.GetType().FullName}");
 
 		// Указываем, каким потоком и каким анализатором обрабатывать кадры
 		_imageAnalysis.SetAnalyzer(_executor, _analyzer);
+		System.Diagnostics.Debug.WriteLine("[AndroidCameraService] Анализатор назначен ImageAnalysis");
 
 		// Получаем текущую Activity как владельца жизненного цикла.
 		// CameraX сам остановит камеру, когда Activity уйдёт в фон, — это поведение нам на руку
@@ -164,6 +166,7 @@ public sealed class AndroidCameraService : CameraServiceBase
 
 		// Привязываем use case'ы к Activity и выбранной камере: с этого момента идёт видео и кадры
 		_cameraProvider.BindToLifecycle(activity, selector, _previewUseCase, _imageAnalysis);
+		System.Diagnostics.Debug.WriteLine("[AndroidCameraService] Use case'ы привязаны к жизненному циклу");
 
 		// Метод синхронный (реальной асинхронности нет) — возвращаем уже завершённую задачу
 		return Task.CompletedTask;
@@ -318,8 +321,10 @@ public sealed class AndroidCameraService : CameraServiceBase
 	// Адаптер между интерфейсом CameraX ImageAnalysis.IAnalyzer и нашим C#-методом.
 	// Почему отдельный класс: CameraX — Java-библиотека, интерфейс помечен атрибутами Java,
 	// поэтому делегат реализовать нельзя, нужен класс-наследник Java.Lang.Object.
-	// Вложенный и sealed — ему не нужна видимость наружу
-	private sealed class CameraAnalyzer : Java.Lang.Object, ImageAnalysis.IAnalyzer
+	// Вложенный и sealed — ему не нужна видимость наружу; класс публичный, потому что
+	// генератору Java-пиров (JCW) так надёжнее: для непубличных вложенных типов рантайм
+	// иногда не находит peer и падает с «no Java peer type found»
+	public sealed class CameraAnalyzer : Java.Lang.Object, ImageAnalysis.IAnalyzer
 	{
 		// Ссылка на наш обработчик кадра (метод ProcessFrame внешнего класса)
 		private readonly Action<IImageProxy> _onFrame;
@@ -329,6 +334,7 @@ public sealed class AndroidCameraService : CameraServiceBase
 		{
 			// Сохраняем ссылку на обработчик
 			_onFrame = onFrame;
+			System.Diagnostics.Debug.WriteLine("[AndroidCameraService] Конструктор CameraAnalyzer выполнен (Java peer найден)");
 		}
 
 		// Метод, который CameraX вызывает для каждого кадра (на потоке из SetAnalyzer)

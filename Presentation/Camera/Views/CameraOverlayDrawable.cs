@@ -40,6 +40,11 @@ public sealed class CameraOverlayDrawable : IDrawable
 	// Шрифт подписи на экране
 	private const float LabelFontSize = 14f;
 
+	// Сколько объектов можно подписать на одном кадре.
+	// Рамки рисуются всем, а текст — только самым крупным: когда объектов много,
+	// надписи на каждом лишь превращают экран в кашу, в которой не видно ни рамок, ни видео
+	private const int MaxLabeledBoxes = 8;
+
 	// Конструктор оверлея: страница передаёт сюда функции получения
 	// геометрии кадра и списка найденных объектов
 	public CameraOverlayDrawable(
@@ -101,9 +106,18 @@ public sealed class CameraOverlayDrawable : IDrawable
 		// Вертикальное смещение — аналогично, по высоте
 		var offsetY = (dirtyRect.Height - frameHeight * scale) / 2;
 
+		// Определяем порядок отрисовки: сначала самые крупные на экране рамки.
+		// Сортируем по площади, а не как пришли, потому что порядок в списке
+		// зависит от модели и между кадрами «прыгает»
+		var ordered = detections
+			.OrderByDescending(static detection => detection.Bounds.Width * detection.Bounds.Height)
+			.ToArray();
+
 		// Рисуем каждый найденный объект по очереди
-		foreach (var detection in detections)
+		for (var i = 0; i < ordered.Length; i++)
 		{
+			// Очередной объект — самый крупный сначала
+			var detection = ordered[i];
 			// Прямоугольник объекта приходит в пикселях кадра, в экранной ориентации
 			var bounds = detection.Bounds;
 
@@ -147,18 +161,23 @@ public sealed class CameraOverlayDrawable : IDrawable
 			// Цвет текста подписи — белый, чтобы читался на любом фоне
 			canvas.FontColor = Colors.White;
 
-			// Размер шрифта подписи в пикселях экрана
-			canvas.FontSize = LabelFontSize;
+			// Подписываем только крупные рамки: когда объектов больше лимита,
+			// надписи на всех лишь замусорят экран. Рамку тем временем рисуем каждому
+			if (i < MaxLabeledBoxes)
+			{
+				// Размер шрифта подписи в пикселях экрана
+				canvas.FontSize = LabelFontSize;
 
-			// Подписываем объект: название класса и уверенность в процентах.
-			// Смещение +4/+4 — небольшой отступ от рамки внутрь.
-			// Выравнивание по левому краю: подпись начинается с левой стороны текста,
-			// то есть позиция x — это начало строки, а не её центр
-			canvas.DrawString(
-				$"{detection.Label} {detection.Confidence:P0}",
-				left + 4,
-				top + 4,
-				HorizontalAlignment.Left);
+				// Подписываем объект: название класса и уверенность в процентах.
+				// Смещение +4/+4 — небольшой отступ от рамки внутрь.
+				// Выравнивание по левому краю: подпись начинается с левой стороны текста,
+				// то есть позиция x — это начало строки, а не её центр
+				canvas.DrawString(
+					$"{detection.Label} {detection.Confidence:P0}",
+					left + 4,
+					top + 4,
+					HorizontalAlignment.Left);
+			}
 		}
 	}
 

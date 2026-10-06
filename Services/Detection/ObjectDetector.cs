@@ -281,13 +281,22 @@ public sealed class ObjectDetector : IDisposable
 				return;
 			}
 
+			// TryGetArray может вернуть true даже с пустым массивом внутри
+			// (например, на пустой памяти). Передавать null в OpenCV нельзя —
+			// это даст «Object reference not set…» без объяснения
+			if (segment.Array is null)
+			{
+				ModelFailed?.Invoke(this, "Кадр камеры не содержит массива пикселей, распознавание пропущено.");
+				return;
+			}
+
 			// Оборачиваем байты кадра в матрицу 4 байта на пиксель.
 			// Тип CV_8UC4 — это 8 бит на канал, 4 канала: подходит и для RGBA, и для BGRA
 			using var source = Mat.FromPixelData(
 				frame.Height,
 				frame.Width,
 				MatType.CV_8UC4,
-				segment.Array!,
+				segment.Array,
 				frame.Stride);
 
 			// ШАГ 2. Приводим к BGR — так OpenCV ожидает цвет.
@@ -396,7 +405,17 @@ public sealed class ObjectDetector : IDisposable
 			// Но и молчать нельзя: если модель несовместима с телефоном,
 			// пользователь должен это увидеть, а не гадать, почему нет рамок.
 			// Сообщаем один раз — на каждый кадр такое слать бессмысленно
-			ModelFailed?.Invoke(this, $"Ошибка распознавания: {ex.Message}");
+			//
+			// К тексту добавляем первую строку стека: для NRE это единственный
+			// способ сразу увидеть в интерфейсе, какой именно шаг упал
+			var source = ex.StackTrace?.Split('\n').FirstOrDefault()?.Trim();
+			ModelFailed?.Invoke(this,
+				$"Ошибка распознавания: {ex.Message}{(string.IsNullOrEmpty(source) ? string.Empty : $"\n{source}")}");
+
+			// Полный стек ошибки — в журнал и в отладчик.
+			// В отладчике он виден сразу в Output-окне, а не только в logcat
+			Console.Error.WriteLine($"[ObjectDetector] Ошибка кадра распознавания: {ex}");
+			System.Diagnostics.Debug.WriteLine($"[ObjectDetector] Ошибка кадра распознавания: {ex}");
 
 			// Дальше кадр пропускаем и ждём следующего
 		}

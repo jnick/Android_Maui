@@ -141,6 +141,10 @@ public sealed class YoloXModel : IDetectionModel
 		// Момент старта сетевого прохода
 		var forwardStart = DetectionDiagnostics.Clock.Elapsed.TotalMilliseconds;
 
+		// Подаём вход сети: без SetInput прямой проход стартует без входных
+		// данных и падает на первом же кадре
+		_net.SetInput(blob);
+
 		// Забираем выход. У YOLOX он ОДИН, поэтому здесь как раз подходит
 		// перегрузка Forward без имени — она возвращает единственный Mat.
 		// (У NanoDet выходов шесть, и там приходится сначала узнавать имена слоёв)

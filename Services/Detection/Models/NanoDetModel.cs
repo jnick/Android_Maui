@@ -161,8 +161,20 @@ public sealed class NanoDetModel : IDetectionModel
 		// нельзя: назначение каждого выхода определяется по его форме, см. SplitOutputs
 		var outputNames = _net.GetUnconnectedOutLayersNames();
 		var outputs = new Mat[outputNames.Length];
+
+		// Каждый слот обязан быть объектом Mat, а не null: managed-обёртка Forward
+		// проходит по массиву и читает CvPtr до нативного вызова, и null-слот упал бы
+		// NullReferenceException внутри OpenCvSharp, а не в нашем декодере
+		for (var i = 0; i < outputs.Length; i++)
+		{
+			outputs[i] = new Mat();
+		}
 		try
 		{
+			// Подаём подготовленный вход сети. Без SetInput прямой проход стартует
+			// без входных данных и падает на первом же кадре
+			_net.SetInput(blob);
+
 			// Выполняем сетевой проход и получаем все выходы разом
 			_net.Forward(outputs, outputNames.Select(static name => name ?? string.Empty));
 
