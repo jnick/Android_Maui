@@ -8,10 +8,17 @@ using CommunityToolkit.Mvvm.Input;
 using MauiBluethooth.Models.Camera;
 // Подключаем наши модели данных распознавания (DetectedObject, ModelDescriptor, DetectionDiagnostics)
 using MauiBluethooth.Models.Detection;
+// Подключаем модель данных Bluetooth-устройства (нужна для обработчика DeviceDiscovered)
+using MauiBluethooth.Models;
 // Подключаем интерфейс камерного сервиса
 using MauiBluethooth.Services;
 // Подключаем детектор: он превращает кадры камеры в рамки
 using MauiBluethooth.Services.Detection;
+// Подключаем передатчик распознанных объектов по Bluetooth
+using MauiBluethooth.Services.Detection.Transmission;
+// Подключаем модель представления устройства из раздела «Устройства»:
+// она уже умеет показывать имя и адрес и используется в общем списке устройств
+using MauiBluethooth.Presentation.Devices.ViewModels;
 // Подключаем MainThread — он нужен, чтобы менять свойства привязки только в UI-потоке
 using Microsoft.Maui.ApplicationModel;
 
@@ -25,6 +32,15 @@ public partial class CameraViewModel : ObservableObject, IDisposable
 {
 	// Ссылка на камерный сервис (инжектируется через конструктор из DI)
 	private readonly ICameraService _cameraService;
+
+	// Ссылка на Bluetooth-сервис: поиск, подключение и отправка.
+	// Нужен здесь для выбора устройства, к которому будут уходить рамки
+	private readonly IBluetoothService _bluetoothService;
+
+	// Ссылка на передатчик распознанных объектов.
+	// ViewModel лишь пробрасывает ему флаг IsTransmissionEnabled,
+	// а сама вся логика отправки живёт в передатчике
+	private readonly DetectionTransmitter _bluetoothTransmitter;
 
 	// Ссылка на детектор. Он подписан на кадры камеры и считает по ним рамки.
 	// Детектор — singleton, а ViewModel тоже singleton, так что подписка ровно одна
@@ -48,14 +64,31 @@ public partial class CameraViewModel : ObservableObject, IDisposable
 	// Смещение, с которого начался текущий отсчёт секунды
 	private long _secondWindowStart;
 
-	// Конструктор: DI внедряет камерный сервис и детектор
-	public CameraViewModel(ICameraService cameraService, ObjectDetector detector)
+	// Конструктор: DI внедряет камерный сервис, детектор, Bluetooth-сервис и передатчик
+	public CameraViewModel(
+		ICameraService cameraService,
+		ObjectDetector detector,
+		IBluetoothService bluetoothService,
+		DetectionTransmitter bluetoothTransmitter)
 	{
 		// Сохраняем сервис в приватное поле
 		_cameraService = cameraService;
 
 		// Сохраняем детектор
 		_detector = detector;
+
+		// Сохраняем Bluetooth-сервис
+		_bluetoothService = bluetoothService;
+
+		// Сохраняем передатчик
+		_bluetoothTransmitter = bluetoothTransmitter;
+
+		// Подписываемся на события Bluetooth-сервиса.
+		// Они приходят из фонового потока, поэтому каждый обработчик
+		// обязан переносить изменения свойств в UI-поток
+		_bluetoothService.DeviceDiscovered += OnBtDeviceDiscovered;
+		_bluetoothService.DiscoveryFinished += OnBtDiscoveryFinished;
+		_bluetoothService.ConnectionChanged += OnBtConnectionChanged;
 
 		// Подписываемся на кадры. Событие приходит с фонового потока платформы, 15–30 раз в секунду.
 		// Обработчик (OnFrameReceived) специально ничего тяжёлого не делает — только троттлит геометрию
@@ -207,6 +240,74 @@ public partial class CameraViewModel : ObservableObject, IDisposable
 	// Максимальный порог уверенности для ползунка
 	public float MaxScoreThreshold => ObjectDetector.MaxScoreThreshold;
 
+	// [ObservableProperty] генерирует публичное свойство IsTransmissionEnabled
+	[ObservableProperty]
+
+	// Флаг: включить ли передачу распознанных объектов в Bluetooth.
+	// Переключатель меняет это свойство, а оно, в свою очередь, — флаг передатчика.
+	// Дополнительной логики нет: «подача включена» — это ровно один флаг у передатчика
+	private bool _isTransmissionEnabled;
+
+	// Реакция на переключатель «Подача в Bluetooth». Вызывается фреймворком автоматически
+	partial void OnIsTransmissionEnabledChanged(bool value)
+	{
+		// Пробрасываем значение в передатчик — таймер запустится или остановится сам
+		_bluetoothTransmitter.IsTransmissionEnabled = value;
+	}
+
+	// Список найденных Bluetooth-устройств для Picker.
+	// Переиспользуем DeviceItemViewModel из раздела «Устройства» — там уже собраны
+	// имя, адрес и статус сопряжения, дублировать модель не нужно
+	public ObservableCollection<DeviceItemViewModel> BluetoothDevices { get; } = [];
+
+	// [ObservableProperty] генерирует публичное свойство IsBluetoothSearching
+	[ObservableProperty]
+
+	// [NotifyPropertyChangedFor] — при изменении флага обновить текст кнопки поиска
+	[NotifyPropertyChangedFor(nameof(BluetoothSearchButtonText))]
+	// Флаг: идёт ли поиск Bluetooth-устройств прямо сейчас
+	private bool _isBluetoothSearching;
+
+	// Текст кнопки поиска: «Стоп», если идёт поиск, иначе «Поиск».
+	// Вычисляемое свойство — как на странице устройств
+	public string BluetoothSearchButtonText => IsBluetoothSearching ? "Стоп" : "Поиск";
+
+	// [ObservableProperty] генерирует публичное свойство IsBluetoothConnected
+	[ObservableProperty]
+
+	// Флаг: установлено ли Bluetooth-соединение. Управляет видимостью кнопки «Отключить»
+	private bool _isBluetoothConnected;
+
+	// [ObservableProperty] генерирует публичное свойство BluetoothStatusText
+	[ObservableProperty]
+
+	// Текст статуса Bluetooth: «не подключено», «идёт поиск», «подключено: HC-05» и т.д.
+	private string _bluetoothStatusText = "Bluetooth: не подключено";
+
+	// Резервное поле выбранного устройства. Сеттер написан вручную,
+	// потому что выбор устройства должен запустить подключение
+	private DeviceItemViewModel? _selectedBluetoothDevice;
+
+	// Выбранное устройство в Picker. Установка значения запускает подключение
+	public DeviceItemViewModel? SelectedBluetoothDevice
+	{
+		// Геттер отдаёт значение поля
+		get => _selectedBluetoothDevice;
+
+		// Сеттер вызывается из Picker, когда пользователь выбрал устройство
+		set
+		{
+			// SetProperty сам заметит изменение. Реагируем только на реальную смену
+			if (SetProperty(ref _selectedBluetoothDevice, value) && value is not null)
+			{
+				// Подключаемся к выбранному устройству.
+				// Ждать в сеттере нельзя — запускаем задачу и не ждём её.
+				// Метод сам обрабатывает ошибки и сам пишет статус
+				_ = ConnectBluetoothAsync(value);
+			}
+		}
+	}
+
 	// [ObservableProperty] генерирует публичное свойство LastDiagnostics
 	[ObservableProperty]
 
@@ -284,6 +385,34 @@ public partial class CameraViewModel : ObservableObject, IDisposable
 	// Геометрия последнего кадра. По ней оверлей (CameraOverlayDrawable) рисует рамку
 	// в тех же координатах, что и видео. null, пока кадров не было
 	private CameraFrameGeometry? _frameGeometry;
+
+	// [ObservableProperty] генерирует публичное свойство IsCameraTabSelected
+	[ObservableProperty]
+
+	// [NotifyPropertyChangedFor] — при смене вкладки обновить парное свойство IsControlsTabSelected.
+	// Без этого вторая кнопка таббара не узнала бы, что её состояние изменилось
+	[NotifyPropertyChangedFor(nameof(IsControlsTabSelected))]
+
+	// Флаг: выбрана ли вкладка «Камера». По умолчанию открыта именно она —
+	// пользователь должен сразу видеть видео, а не панель управления
+	private bool _isCameraTabSelected = true;
+
+	// Парное свойство: выбрана ли вкладка «Управление».
+	// Вычисляемое, а не отдельное поле: вкладок ровно две, поэтому одно
+	// всегда является отрицанием другого, и синхронизировать два поля не нужно
+	public bool IsControlsTabSelected => !IsCameraTabSelected;
+
+	// [RelayCommand] генерирует команду ShowCameraTabCommand (кнопка «Камера»)
+	[RelayCommand]
+
+	// Показать вкладку камеры
+	private void ShowCameraTab() => IsCameraTabSelected = true;
+
+	// [RelayCommand] генерирует команду ShowControlsTabCommand (кнопка «Управление»)
+	[RelayCommand]
+
+	// Показать вкладку управления
+	private void ShowControlsTab() => IsCameraTabSelected = false;
 
 	// Вызывается страницей из OnAppearing: страница открылась
 	public async Task OnAppearingAsync()
@@ -370,6 +499,16 @@ public partial class CameraViewModel : ObservableObject, IDisposable
 
 		// Синхронизируем UI с реальным состоянием: кнопка «Остановить» должна исчезнуть
 		IsRunning = false;
+
+		// Выключаем передачу распознавания: камеры больше нет, отправлять нечего.
+		// Сам Bluetooth-канал НЕ рвём — соединение переживает уход со страницы
+		// (иначе переход на «Диагностику» или «Задания» обрывал бы линию)
+		IsTransmissionEnabled = false;
+
+		// Если в этот момент шёл поиск устройств — останавливаем его.
+		// Закрытая страница не должна занимать Bluetooth-адаптер поиском
+		if (IsBluetoothSearching)
+			await StopBluetoothSearchAsync();
 	}
 
 	// [RelayCommand] генерирует команду StartCameraCommand для вызова из XAML
@@ -401,6 +540,191 @@ public partial class CameraViewModel : ObservableObject, IDisposable
 	// если пользователь уже отказал. Метод статический: ему не нужен доступ к полям ViewModel
 	private static void OpenSettings() => AppInfo.ShowSettingsUI();
 
+	// [RelayCommand] генерирует команду ToggleBluetoothSearchCommand (кнопка «Поиск»/«Стоп»)
+	[RelayCommand]
+
+	// Команда переключения поиска Bluetooth-устройств: одна кнопка «Поиск» и «Стоп»
+	private async Task ToggleBluetoothSearch()
+	{
+		// Если поиск уже идёт — пользователь нажал «Стоп»
+		if (IsBluetoothSearching)
+		{
+			// Останавливаем поиск и выходим
+			await StopBluetoothSearchAsync();
+			return;
+		}
+
+		// Запрашиваем разрешения на Bluetooth перед поиском
+		if (!await _bluetoothService.RequestPermissionsAsync())
+		{
+			// Без разрешений поиск не начнётся — сообщаем, что нужно их выдать
+			BluetoothStatusText = "Bluetooth: нет доступа. Проверьте разрешения.";
+			return;
+		}
+
+		// Очищаем прошлый список найденных устройств
+		BluetoothDevices.Clear();
+		// Сообщаем о начале поиска
+		BluetoothStatusText = "Bluetooth: идёт поиск...";
+		// Взводим флаг поиска (кнопка меняется на «Стоп»)
+		IsBluetoothSearching = true;
+
+		// Оборачиваем в try/catch: запуск поиска может упасть (выключен адаптер и т.п.)
+		try
+		{
+			// Запускаем поиск через сервис
+			var started = await _bluetoothService.StartDiscoveryAsync();
+
+			// Если не удалось запустить
+			if (!started)
+			{
+				// Снимаем флаг и сообщаем о проблеме
+				IsBluetoothSearching = false;
+				BluetoothStatusText = "Bluetooth: не удалось запустить поиск.";
+			}
+		}
+		catch (Exception ex)
+		{
+			// Показываем текст ошибки
+			IsBluetoothSearching = false;
+			BluetoothStatusText = $"Bluetooth: ошибка поиска: {ex.Message}";
+		}
+	}
+
+	// [RelayCommand] генерирует команду DisconnectBluetoothCommand (кнопка «Отключить»)
+	[RelayCommand]
+
+	// Команда явного отключения от Bluetooth-устройства
+	private async Task DisconnectBluetooth()
+	{
+		// Обрабатываем ошибки отключения
+		try
+		{
+			// Просим сервис закрыть соединение. Статус обновит обработчик ConnectionChanged
+			await _bluetoothService.DisconnectAsync();
+		}
+		catch (Exception ex)
+		{
+			// Показываем текст ошибки
+			BluetoothStatusText = $"Bluetooth: ошибка отключения: {ex.Message}";
+		}
+	}
+
+	// Подключение к выбранному устройству. Запускается сеттером SelectedBluetoothDevice
+	private async Task ConnectBluetoothAsync(DeviceItemViewModel item)
+	{
+		// Во время поиска соединиться нельзя — останавливаем его
+		if (IsBluetoothSearching)
+			await StopBluetoothSearchAsync();
+
+		// Показываем, что идёт подключение
+		BluetoothStatusText = "Bluetooth: подключение...";
+
+		// Обрабатываем ошибки подключения
+		try
+		{
+			// Просим сервис установить соединение с выбранным устройством
+			var ok = await _bluetoothService.ConnectAsync(item.Device);
+
+			// Если подключились — сервис уже вызвал ConnectionChanged(true),
+			// но статус всё равно обновим: вдруг обработчик события не успел
+			BluetoothStatusText = ok ? $"Bluetooth: {item.Name}" : "Bluetooth: не удалось подключиться";
+		}
+		catch (Exception ex)
+		{
+			// Показываем текст ошибки
+			BluetoothStatusText = $"Bluetooth: ошибка подключения: {ex.Message}";
+		}
+	}
+
+	// Внутренний метод остановки поиска Bluetooth-устройств
+	private async Task StopBluetoothSearchAsync()
+	{
+		// Обрабатываем ошибки остановки
+		try
+		{
+			// Останавливаем поиск через сервис
+			await _bluetoothService.StopDiscoveryAsync();
+		}
+		catch (Exception ex)
+		{
+			// Ошибка не фатальна — просто пишем в лог
+			System.Diagnostics.Debug.WriteLine($"[CameraViewModel] Ошибка остановки поиска: {ex.Message}");
+		}
+
+		// Снимаем флаг в любом случае: поиск завершён или остановлен принудительно
+		IsBluetoothSearching = false;
+	}
+
+	// Обработчик события «найдено Bluetooth-устройство». Приходит с фонового потока
+	private void OnBtDeviceDiscovered(object? sender, BluetoothDeviceInfo device)
+	{
+		// Переносим обновление списка в UI-поток
+		MainThread.BeginInvokeOnMainThread(() =>
+		{
+			// Ищем уже существующую запись с таким же адресом
+			var existing = BluetoothDevices.FirstOrDefault(d => d.Address == device.Address);
+
+			// Если записи ещё нет — добавляем новую
+			if (existing is null)
+			{
+				BluetoothDevices.Add(new DeviceItemViewModel(device));
+			}
+			else
+			{
+				// Устройство уже в списке — обновляем его данные
+				existing.Update(device);
+			}
+		});
+	}
+
+	// Обработчик события «поиск Bluetooth завершён». Приходит с фонового потока
+	private void OnBtDiscoveryFinished(object? sender, EventArgs e)
+	{
+		// Переносим обновление UI в главный поток
+		MainThread.BeginInvokeOnMainThread(() =>
+		{
+			// Снимаем флаг поиска
+			IsBluetoothSearching = false;
+
+			// Показываем понятный статус вместо «идёт поиск...»
+			if (BluetoothStatusText == "Bluetooth: идёт поиск...")
+				BluetoothStatusText = "Bluetooth: поиск завершён. Выберите устройство.";
+		});
+	}
+
+	// Обработчик события «изменилось состояние Bluetooth-соединения». С фонового потока
+	private void OnBtConnectionChanged(object? sender, bool connected)
+	{
+		// Переносим обновление UI в главный поток
+		MainThread.BeginInvokeOnMainThread(() =>
+		{
+			// Обновляем флаг — кнопка «Отключить» видна только при соединении
+			IsBluetoothConnected = connected;
+
+			// Если соединение установлено
+			if (connected)
+			{
+				// Показываем имя подключённого устройства (если оно ещё выбрано в списке)
+				BluetoothStatusText = SelectedBluetoothDevice is not null
+					? $"Bluetooth: {SelectedBluetoothDevice.Name}"
+					: "Bluetooth: подключено";
+			}
+			else
+			{
+				// Соединение потеряно или закрыто.
+				// Сразу выключаем передачу: отправлять в никуда бессмысленно
+				IsTransmissionEnabled = false;
+
+				// Показываем нейтральный статус
+				BluetoothStatusText = "Bluetooth: не подключено";
+
+				// Снимаем выбор устройства, чтобы пользователь мог подключиться заново
+				SelectedBluetoothDevice = null;
+			}
+		});
+	}
+
 	// Освобождение ресурсов: вызывается, когда DI уничтожает сервис
 	public void Dispose()
 	{
@@ -418,6 +742,12 @@ public partial class CameraViewModel : ObservableObject, IDisposable
 		_detector.SnapshotReady -= OnDetectionSnapshotReady;
 		_detector.DiagnosticsReady -= OnDetectionDiagnosticsReady;
 		_detector.ModelFailed -= OnDetectionModelFailed;
+
+		// Отписываемся от событий Bluetooth-сервиса — тот же принцип, что и выше:
+		// синглтон-сервис не должен удерживать ViewModel в памяти
+		_bluetoothService.DeviceDiscovered -= OnBtDeviceDiscovered;
+		_bluetoothService.DiscoveryFinished -= OnBtDiscoveryFinished;
+		_bluetoothService.ConnectionChanged -= OnBtConnectionChanged;
 	}
 
 	// [ObservableProperty] генерирует публичное свойство IsTasksRefreshing

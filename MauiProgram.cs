@@ -24,8 +24,10 @@ using MauiBluethooth.Presentation.Devices.Views;
 using MauiBluethooth.Presentation.Main.ViewModels;
 // Подключаем главную страницу
 using MauiBluethooth.Presentation.Main.Views;
-// Подключаем сервисы распознавания: каталог моделей и сам детектор
+// Подключаем сервисы распознавания: каталог моделей, детектор и передатчик по Bluetooth
 using MauiBluethooth.Services.Detection;
+// Подключаем передатчик результатов распознавания по Bluetooth
+using MauiBluethooth.Services.Detection.Transmission;
 // Подключаем интерфейс Bluetooth-сервиса
 using MauiBluethooth.Services;
 // Подключаем логирование Microsoft
@@ -98,6 +100,11 @@ public static class MauiProgram
 		// весом в десятки мегабайт. Новый экземпляр на каждый кадр или на каждую страницу
 		// означал бы повторную загрузку модели
 		builder.Services.AddSingleton<ObjectDetector>();
+
+		// Передатчик распознанных объектов по Bluetooth — singleton.
+		// Он подписывается на снимки детектора и живёт всё приложение:
+		// отдельный экземпляр на страницу создал бы несколько подписок
+		builder.Services.AddSingleton<DetectionTransmitter>();
 
 		// Регистрируем страницу камеры как singleton.
 		// Именно singleton, а не transient: страница держит нативный PreviewView, и при каждом

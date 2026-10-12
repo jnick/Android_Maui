@@ -35,12 +35,59 @@
              BackgroundColor="Black">
 
     <!-- Корневой Grid: две строки.
-         RowDefinitions="*,Auto" — «*» означает «занять всё оставшееся место» (здесь видео),
-         «Auto» — «высота по содержимому» (здесь нижняя панель с кнопками) -->
-    <Grid RowDefinitions="*,Auto">
+         RowDefinitions="Auto,*" — «Auto» — высота таббара по содержимому,
+         «*» — всё оставшееся место под контент (видео или панель управления) -->
+    <Grid RowDefinitions="Auto,*">
 
-        <!-- Строка 0: область видео. Внутри ещё Grid — элементы накладываются друг на друга -->
-        <Grid Grid.Row="0">
+        <!-- Строка 0: таббар с двумя вкладками — «Камера» и «Управление».
+             Это не отдельные страницы, а две проекции одной: переключение мгновенное,
+             камера при этом не пересоздаётся и не гаснет -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,*">
+
+            <!-- Кнопка вкладки «Камера». Активное состояние подсвечивается синим
+                 через DataTrigger: привязка к IsCameraTabSelected -->
+            <Button Grid.Column="0"
+                    Text="Камера"
+                    FontSize="14"
+                    CornerRadius="0"
+                    BackgroundColor="#1F1F1F"
+                    TextColor="#AAAAAA"
+                    Command="{Binding ShowCameraTabCommand}">
+                <Button.Triggers>
+                    <DataTrigger TargetType="Button"
+                                 Binding="{Binding IsCameraTabSelected}"
+                                 Value="True">
+                        <Setter Property="BackgroundColor" Value="#1A73E8" />
+                        <Setter Property="TextColor" Value="White" />
+                    </DataTrigger>
+                </Button.Triggers>
+            </Button>
+
+            <!-- Кнопка вкладки «Управление»: распознавание, Bluetooth и переходы.
+                 Активное состояние — по привязке к IsControlsTabSelected -->
+            <Button Grid.Column="1"
+                    Text="Управление"
+                    FontSize="14"
+                    CornerRadius="0"
+                    BackgroundColor="#1F1F1F"
+                    TextColor="#AAAAAA"
+                    Command="{Binding ShowControlsTabCommand}">
+                <Button.Triggers>
+                    <DataTrigger TargetType="Button"
+                                 Binding="{Binding IsControlsTabSelected}"
+                                 Value="True">
+                        <Setter Property="BackgroundColor" Value="#1A73E8" />
+                        <Setter Property="TextColor" Value="White" />
+                    </DataTrigger>
+                </Button.Triggers>
+            </Button>
+        </Grid>
+
+        <!-- Строка 1: контент. Слои накладываются друг на друга в одном Grid:
+             сначала идёт слой камеры (снизу), затем слой управления (сверху).
+             Когда панель управления видима, её непрозрачный фон перекрывает видео,
+             но нативный предпросмотр остаётся в дереве и продолжает работать -->
+        <Grid Grid.Row="1">
 
             <!-- Собственно живое видео с камеры.
                  Это наш кроссплатформенный контрол, который через handler подставляет
@@ -82,16 +129,16 @@
                                Color="White"
                                HorizontalOptions="Center"
                                VerticalOptions="Center" />
-        </Grid>
 
-        <!-- Строка 1: нижняя панель управления.
-             Padding="16"  — отступы от краёв, чтобы элементы не липли к границам экрана
-             Spacing="8"   — промежуток между элементами панели
-             BackgroundColor="Black" — визуально отделяет панель от яркой картинки камеры -->
-        <VerticalStackLayout Grid.Row="1"
-                             Padding="16"
-                             Spacing="8"
-                             BackgroundColor="Black">
+        <!-- Слой управления: виден только при выбранной вкладке «Управление».
+             ScrollView — потому что контролов много и на небольших экранах они не помещаются.
+             BackgroundColor="Black" обязателен: панель перекрывает видео и должна быть непрозрачной.
+             Слой лежит последним среди детей Grid, поэтому рисуется поверх слоя камеры -->
+        <ScrollView IsVisible="{Binding IsControlsTabSelected}"
+                    BackgroundColor="Black">
+            <VerticalStackLayout Padding="16"
+                                 Spacing="8"
+                                 BackgroundColor="Black">
 
             <!-- Выбор камеры из списка (задняя/фронтальная, либо список веб-камер в Windows).
                  Показывается только когда камер больше одной — этим управляет ViewModel.
@@ -224,6 +271,44 @@
                    FontSize="12"
                    IsVisible="{Binding HasModelError}" />
 
+            <!-- ===== Блок передачи по Bluetooth ===== -->
+
+            <!-- Переключатель подачи распознанных объектов в Bluetooth.
+                 Работает только при установленном соединении (см. BluetoothStatusText) -->
+            <HorizontalStackLayout Spacing="8"
+                                    HorizontalOptions="Center">
+                <Switch IsToggled="{Binding IsTransmissionEnabled}" />
+                <Label Text="Подача в Bluetooth"
+                       TextColor="White"
+                       VerticalOptions="Center" />
+            </HorizontalStackLayout>
+
+            <!-- Статус Bluetooth: не подключено / подключено / идёт поиск / текст ошибки -->
+            <Label Text="{Binding BluetoothStatusText}"
+                   TextColor="White"
+                   HorizontalTextAlignment="Center" />
+
+            <!-- Поиск/Стоп и отключение. Кнопка «Отключить» видна только при соединении -->
+            <HorizontalStackLayout Spacing="8"
+                                    HorizontalOptions="Center">
+                <Button Text="{Binding BluetoothSearchButtonText}"
+                        FontSize="12"
+                        Command="{Binding ToggleBluetoothSearchCommand}" />
+                <Button Text="Отключить"
+                        FontSize="12"
+                        Command="{Binding DisconnectBluetoothCommand}"
+                        IsVisible="{Binding IsBluetoothConnected}" />
+            </HorizontalStackLayout>
+
+            <!-- Список найденных устройств. Выбор запускает подключение.
+                 ItemDisplayBinding показывает имя, а не ToString() объекта -->
+            <Picker Title="Bluetooth-устройство"
+                    ItemsSource="{Binding BluetoothDevices}"
+                    ItemDisplayBinding="{Binding Name}"
+                    SelectedItem="{Binding SelectedBluetoothDevice}"
+                    TextColor="White"
+                    TitleColor="White" />
+
             <!-- Переходы на страницы диагностики и заданий.
                  Команды, а не события Clicked: в этом проекте вся навигация
                  живёт в ViewModel, а страница только связывает. Иначе страница
@@ -242,6 +327,8 @@
                         Command="{Binding GoToTasksCommand}" />
             </HorizontalStackLayout>
         </VerticalStackLayout>
+        </ScrollView>
+        </Grid>
     </Grid>
 
 </ContentPage>

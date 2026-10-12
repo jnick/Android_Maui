@@ -8,6 +8,8 @@ using CommunityToolkit.Mvvm.Input;
 using MauiBluethooth.Models;
 // Подключаем интерфейс Bluetooth-сервиса
 using MauiBluethooth.Services;
+// Подключаем передатчик распознанных объектов по Bluetooth
+using MauiBluethooth.Services.Detection.Transmission;
 
 // Объявляем пространство имён для моделей представления раздела «Чат»
 namespace MauiBluethooth.Presentation.Chat.ViewModels;
@@ -17,8 +19,20 @@ public partial class ChatViewModel : ObservableObject
 {
 	// Ссылка на Bluetooth-сервис (инжектируется через конструктор)
 	private readonly IBluetoothService _bluetoothService;
+
+	// Ссылка на передатчик распознанных объектов.
+	// Он испускает событие PacketSent для каждой строки, уходящей устройству, —
+	// эти строки чат показывает как свои исходящие сообщения
+	private readonly DetectionTransmitter _transmitter;
+
 	// Флаг: подписаны ли мы на события сервиса (чтобы не подписываться повторно)
 	private bool _isSubscribed;
+
+	// Максимальное число сообщений в чате.
+	// Ограничение важно: передатчик шлёт строки 5 раз в секунду, и без лимита
+	// список рос бы бесконечно, выжирая память. При достижении лимита
+	// самые старые сообщения удаляются (см. TrimMessages)
+	private const int MaxMessages = 100;
 
 	// Коллекция сообщений чата для отображения в списке
 	public ObservableCollection<ChatMessage> Messages { get; } = [];
@@ -43,11 +57,21 @@ public partial class ChatViewModel : ObservableObject
 	// Флаг: установлено ли соединение с устройством
 	private bool isConnected;
 
-	// Конструктор: получает Bluetooth-сервис из DI
-	public ChatViewModel(IBluetoothService bluetoothService)
+	// Конструктор: получает Bluetooth-сервис и передатчик из DI
+	public ChatViewModel(IBluetoothService bluetoothService, DetectionTransmitter transmitter)
 	{
 		// Сохраняем сервис в приватное поле
 		_bluetoothService = bluetoothService;
+
+		// Сохраняем передатчик
+		_transmitter = transmitter;
+
+		// Подписываемся на отправленные пакеты ПРОСТО ТАК, в конструкторе, а не в Subscribe().
+		// Зачем: пакеты распознавания уходят, пока пользователь на экране камеры,
+		// а чат при этом не открыт. Если подписаться только при открытии чата,
+		// эти строки были бы потеряны. Подписка в конструкторе (View‑модель — синглтон)
+		// означает: чат собирает историю передач всегда, и открывшийся чат её показывает
+		_transmitter.PacketSent += OnPacketSent;
 	}
 
 	// Инициализация экрана данными выбранного устройства (вызывается при открытии страницы)
@@ -183,6 +207,37 @@ public partial class ChatViewModel : ObservableObject
 			// Добавляем входящее сообщение в список чата
 			Messages.Add(new ChatMessage { Text = data, IsIncoming = true });
 		});
+	}
+
+	// Обработчик события передатчика «строка-пакет отправлена устройству».
+	// ВАЖНО: событие приходит с потока таймера передатчика, а не из UI-потока
+	private void OnPacketSent(object? sender, string line)
+	{
+		// Переносим изменение коллекции в UI-поток:
+		// ObservableCollection нельзя менять из фонового потока
+		MainThread.BeginInvokeOnMainThread(() =>
+		{
+			// Добавляем отправленную строку как ИСХОДЯЩЕЕ сообщение (синий пузырь справа) —
+			// ровно как обычное сообщение, которое пользователь отправил кнопкой.
+			// Так видно, что именно уходит в эфир во время передачи распознавания
+			Messages.Add(new ChatMessage { Text = line, IsIncoming = false });
+
+			// Удерживаем список в пределах лимита: удаляем самые старые строки
+			TrimMessages();
+		});
+	}
+
+	// Обрезает список сообщений до MaxMessages, удаляя самые старые.
+	// Сообщения добавляются в конец, значит самые старые — в начале (индекс 0).
+	// RemoveAt(0) сдвигает все элементы влево, зато список никогда не разбухает
+	private void TrimMessages()
+	{
+		// Пока сообщений больше лимита — удаляем по одному старому из начала
+		while (Messages.Count > MaxMessages)
+		{
+			// Удаляем самое старое сообщение
+			Messages.RemoveAt(0);
+		}
 	}
 
 	// Обработчик изменения состояния соединения
